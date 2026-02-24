@@ -1,79 +1,136 @@
-# CLAUDE.md — sanna-openclaw
+# sanna-openclaw
 
-## What This Is
-OpenClaw plugin that enforces Sanna governance constitutions on AI agent tool execution. Prevents unauthorized actions, generates Ed25519-signed cryptographic receipts. TypeScript plugin + Python sidecar architecture.
+Governance plugin for OpenClaw. Enforces Sanna constitutions on agent tool execution
+with cryptographic receipts.
 
 ## Architecture
-- TypeScript plugin runs in-process with the OpenClaw Gateway
-- Python sidecar wraps the sanna library (pip install sanna >=0.13.4) as localhost HTTP
-- Plugin registers wrapper tools (sanna_exec, sanna_write, etc.) that replace core tools
-- Gateway deny-list blocks core tools, forcing all execution through wrappers
-- before_tool_call hook is a structural safety net independent of wrappers
-- tool_result_persist hook generates post-execution audit receipts
+
+LLM sees ONLY sanna_* wrapper tools (controlled via tools.allow in openclaw.json).
+Original tools remain callable via POST /tools/invoke (not denied at HTTP layer).
+
+Enforcement flow:
+1. LLM calls sanna_exec (wrapper)
+2. Wrapper POSTs to sidecar /enforce with tool name, args, action
+3. Sidecar evaluates against constitution
+4. If allowed: wrapper POSTs to gateway /tools/invoke with original tool + args
+5. Result returned to LLM
+6. tool_result_persist hook annotates result with receipt hash
+
+Sidecar response mapping (enforce.ts → mapSidecarResponse):
+- Sidecar returns `verdict` ("allow"/"halt"/"escalate"), TS uses `decision`
+- "halt" maps to "deny"
+- receipt_hash extracted from receipt.receipt_id
+
+Safety net:
+- before_tool_call hook catches any direct calls to governed originals
+  (shouldn't happen if tools.allow is configured, but defense in depth)
 
 ## Source Layout
+
 ```
 src/
-  index.ts              # register(api) entry point
-  sidecar.ts            # Python process lifecycle (start, health, restart, stop)
-  client.ts             # HTTP client for sidecar communication
-  types.ts              # Shared TypeScript types
-  enforcement/
-    gate.ts             # Wrapper tool registration + enforcement flow
-    policy.ts           # Gateway deny-list generation
-    intercept.ts        # before_tool_call safety net hook
-    escalation.ts       # must_escalate approval workflow
-  tools/
-    check.ts            # sanna_check voluntary pre-check
-    status.ts           # sanna_status
-    receipt.ts          # sanna_receipt lookup
-  hooks/
-    audit.ts            # tool_result_persist post-exec receipts
-  commands/
-    dashboard.ts        # /sanna
-    receipts.ts         # /sanna receipts
-    verify.ts           # /sanna verify
-    constitution.ts     # /sanna constitution
-    export.ts           # /sanna export
-    setup.ts            # openclaw sanna setup
-sidecar/
-  __main__.py           # uvicorn entrypoint
-  server.py             # FastAPI app wrapping sanna library
-  requirements.txt      # sanna>=0.13.4, fastapi, uvicorn
-skills/sanna-governance/
-  SKILL.md              # Agent behavioral rules
-constitutions/          # Template constitutions
-tests/                  # vitest (TS) + pytest (Python)
+  index.ts      — plugin entry point (register function)
+  config.ts     — config types and defaults
+  types.ts      — TypeScript interfaces
+  tools.ts      — wrapper tool registration
+  enforce.ts    — sidecar /enforce + gateway /tools/invoke forwarding
+  hooks.ts      — before_tool_call safety net + tool_result_persist receipts
+  sidecar.ts    — sidecar lifecycle (registerService)
+  gateway.ts    — sanna.status + sanna.audit RPC methods
+  cli.ts        — openclaw sanna status|audit|verify CLI commands
+skills/sanna/
+  SKILL.md      — agent-facing tool guidance (injected into system prompt)
+sidecar/        — Python FastAPI sidecar (do not touch)
+constitutions/  — YAML constitution templates
 docs/
-  SETUP.md              # Installation and configuration guide
-  CONSTITUTION_GUIDE.md # How to write and customize constitutions
-README.md               # Project README
+  SETUP.md      — installation and configuration guide
+  CONSTITUTION_GUIDE.md
+tests/          — vitest tests
 ```
 
-## Rules
+## Confirmed OpenClaw APIs (from docs.openclaw.ai)
 
-Sidecar unreachable = HALT. Never fail open. If the enforcement engine is down, the agent cannot act.
-Wrapper tools generate enforcement receipts BEFORE forwarding. Audit hook generates receipts AFTER execution. Governed tools get two receipts.
-Constitution enforcement and cryptographic receipts are equal pillars. Never ship one without the other.
-Ed25519 signatures use RFC 8785 JSON canonicalization (from sanna library). Do not reimplement.
-All sidecar communication is localhost HTTP only. Never expose the sidecar to the network.
-Run vitest after every TypeScript change. Run pytest after every sidecar change. Zero regressions.
-Never name specific LLM models in code comments, docs, or changelogs.
-package.json is the single source for version. openclaw.plugin.json version must match.
+- api.registerTool({ name, description, parameters, execute }, { optional })
+- api.registerService({ id, start, stop })
+- api.registerHook(event, handler, { name, description })
+- api.registerGatewayMethod(name, handler)
+- api.registerCli(fn, { commands })
+- POST /tools/invoke: { tool, args, sessionKey? } with Bearer auth
+- tools.allow/deny: agent-level, controls LLM tool visibility
+- gateway.tools.deny/allow: HTTP-level, separate from agent policy
+- before_tool_call / after_tool_call: plugin hooks, intercept tool params/results
+- tool_result_persist: synchronous transform hook
 
-## Testing
+## Tool Inventory (OpenClaw built-in)
 
-TypeScript: npx vitest run from repo root
-Python: cd sidecar && python -m pytest tests/ -v
-Integration: Requires running OpenClaw instance
+group:fs — read, write, edit, apply_patch
+group:runtime — exec, bash, process
+group:web — web_search, web_fetch
+group:ui — browser (composite: 20+ actions), canvas (composite)
+group:messaging — message (composite: 30+ actions)
+group:sessions — sessions_list, sessions_history, sessions_send, sessions_spawn, session_status
+group:memory — memory_search, memory_get
+group:automation — cron (composite), gateway (composite)
+group:nodes — nodes (composite)
+Other — image, agents_list
 
-## OpenClaw Plugin API (reference)
+Composite tools use an "action" parameter to select behavior.
+Browser is ONE tool, not separate navigate/click/type tools.
 
-api.registerTool({ name, description, schema, handler }) — register agent tool
-api.on('before_tool_call', handler) — intercept before execution
-api.on('tool_result_persist', handler) — intercept after execution
-api.registerCommand({ name, handler }) — slash commands
-api.registerCli({ name, handler }) — CLI commands
-api.registerService({ name, start, stop }) — background service lifecycle
-Tool names CANNOT shadow core tools (exec, write, edit, etc.)
-Gateway tool policy can deny specific tool names
+## Setup (tools.allow pattern)
+
+In openclaw.json, configure tools.allow to show ONLY sanna_* wrappers for governed tools:
+```json
+{
+  "tools": {
+    "allow": [
+      "sanna_exec", "sanna_bash", "sanna_write", "sanna_edit",
+      "sanna_apply_patch", "sanna_process", "sanna_browser",
+      "sanna_message", "sanna_nodes", "sanna_web_search",
+      "sanna_web_fetch", "sanna_cron", "sanna_gateway",
+      "sanna_sessions_send", "sanna_sessions_spawn",
+      "group:sessions", "group:memory", "image", "read",
+      "canvas", "agents_list", "session_status"
+    ]
+  }
+}
+```
+See docs/SETUP.md for full instructions.
+
+## CLI Commands
+
+- `openclaw sanna status` — show sidecar health, mode, constitution, governed tools
+- `openclaw sanna audit` — show recent enforcement decisions (--limit N)
+- `openclaw sanna verify <receipt-hash>` — verify a receipt via sidecar
+
+## Gateway RPC Methods
+
+- `sanna.status` — enforcement status overview (mode, sidecar health, constitution, stats)
+- `sanna.audit` — recent enforcement decisions from sidecar
+
+## Constitution Templates
+
+Three starter templates in constitutions/:
+- personal.yaml — lenient: broad execution, messaging requires escalation
+- developer.yaml — balanced: full workspace, communication requires escalation
+- team.yaml — strict: narrow execution, broad escalation requirements
+
+All validated against the sanna library. See docs/CONSTITUTION_GUIDE.md.
+
+## Test Commands
+
+npx vitest run                    # 91 TypeScript tests (10 files)
+cd sidecar && python -m pytest tests/ -v   # 13 Python sidecar tests
+
+Total: 104 tests (91 TS + 13 Python)
+
+Integration tests (tests/integration.test.ts) spawn a real Python sidecar
+and exercise the full enforcement loop. They require sanna + uvicorn installed.
+
+## DO NOT
+
+- Touch sidecar/ (Python side is correct)
+- Assume before_tool_call doesn't exist (it does — Agent Loop docs confirm it)
+- Split composite tools into separate wrappers (browser is ONE tool)
+- Use tools.deny to block originals (use tools.allow to show ONLY wrappers)
+- Deny originals at gateway.tools.deny (forwarding needs them callable via HTTP)

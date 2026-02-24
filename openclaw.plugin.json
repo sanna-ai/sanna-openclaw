@@ -2,23 +2,42 @@
   "id": "sanna",
   "name": "Sanna Governance",
   "version": "0.1.0",
-  "description": "Constitution enforcement and cryptographic receipts for OpenClaw agents",
-  "skills": ["skills/sanna-governance"],
+  "description": "Constitution enforcement and cryptographic receipts for OpenClaw agent tool execution",
   "configSchema": {
     "type": "object",
+    "additionalProperties": false,
     "properties": {
-      "constitutionPath": { "type": "string", "description": "Path to YAML constitution" },
-      "signingKeyPath": { "type": "string", "description": "Path to Ed25519 signing key" },
-      "publicKeyPath": { "type": "string", "description": "Path to Ed25519 public key" },
-      "receiptStorePath": { "type": "string", "description": "Path to SQLite receipt database" },
-      "sidecarPort": { "type": "number", "default": 18791 },
-      "sidecarHost": { "type": "string", "default": "127.0.0.1" },
-      "pythonPath": { "type": "string", "description": "Python 3.10+ binary (auto-detected if not set)" },
+      "constitutionPath": {
+        "type": "string",
+        "description": "Path to YAML constitution file"
+      },
+      "gatewayPort": {
+        "type": "number",
+        "default": 18789
+      },
+      "gatewayToken": {
+        "type": "string",
+        "description": "Gateway auth token for /tools/invoke forwarding"
+      },
+      "sidecarPort": {
+        "type": "number",
+        "default": 18890
+      },
       "governedTools": {
         "type": "array",
         "items": { "type": "string" },
-        "default": ["exec", "write", "edit", "apply_patch", "browser_navigate", "browser_click"]
+        "description": "Tool names to wrap with governance. Defaults to all tier 1+2 tools."
+      },
+      "enforcementMode": {
+        "type": "string",
+        "enum": ["enforce", "audit", "passthrough"],
+        "default": "enforce"
       }
     }
+  },
+  "uiHints": {
+    "constitutionPath": { "label": "Constitution Path", "placeholder": "~/.openclaw/sanna/constitution.yaml" },
+    "gatewayToken": { "label": "Gateway Token", "sensitive": true },
+    "enforcementMode": { "label": "Enforcement Mode" }
   }
 }

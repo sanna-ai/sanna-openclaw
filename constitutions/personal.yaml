@@ -1,0 +1,49 @@
+# Sanna Constitution: Personal Productivity
+# Lenient governance for personal use. Broad workspace access with
+# guardrails on messaging and system process control.
+
+sanna_constitution: "0.1.0"
+
+identity:
+  agent_name: openclaw-personal
+  domain: personal-productivity
+  description: >-
+    Personal productivity agent with broad file and execution access.
+    Messaging and process control require explicit approval.
+
+provenance:
+  authored_by: sanna-openclaw
+  approved_by:
+    - user
+  approval_date: "2026-02-24"
+  approval_method: template
+
+boundaries:
+  - id: B001
+    description: Agent operates within the user's personal workspace
+    category: scope
+    severity: medium
+  - id: B002
+    description: Destructive system commands require explicit approval
+    category: safety
+    severity: high
+
+authority_boundaries:
+  can_execute:
+    - exec
+    - bash
+    - write
+    - edit
+    - apply_patch
+    - browser
+    - web_search
+    - web_fetch
+  must_escalate:
+    - condition: message
+    - condition: sessions_send
+    - condition: sessions_spawn
+    - condition: process
+  cannot_execute:
+    - nodes
+    - cron
+    - gateway
