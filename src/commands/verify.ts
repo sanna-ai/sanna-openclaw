@@ -1,5 +1,5 @@
 /**
- * /sanna verify — verify a receipt by looking it up.
+ * /sanna verify — look up a receipt by ID.
  */
 
 import type { OpenClawPluginAPI } from "../types.js";
@@ -17,22 +17,18 @@ export function registerVerifyCommand(
         return "Usage: /sanna verify <receipt_id>";
       }
 
-      try {
-        const receipts = await client.listReceipts();
-        const receipt = receipts.find((r) => r.receipt_id === receiptId);
-        if (!receipt) {
-          return `No receipt found with ID: ${receiptId}`;
-        }
-        return [
-          `## Receipt \`${receiptId}\``,
-          ``,
-          "```json",
-          JSON.stringify(receipt, null, 2),
-          "```",
-        ].join("\n");
-      } catch (err) {
-        return `Verification failed: ${err}`;
+      const summaries = await client.receipts();
+      const match = summaries.find((r) => r.id === receiptId);
+      if (!match) {
+        return `No receipt found with ID: ${receiptId}`;
       }
+      return [
+        `## Receipt \`${receiptId}\``,
+        ``,
+        "```json",
+        JSON.stringify(match, null, 2),
+        "```",
+      ].join("\n");
     },
   });
 }

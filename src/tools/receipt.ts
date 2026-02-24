@@ -18,27 +18,20 @@ export function registerReceiptTool(
       type: "object",
       properties: {
         tool: { type: "string", description: "Filter by tool name" },
-        verdict: { type: "string", description: "Filter by verdict (allow, deny, halt)" },
+        verdict: { type: "string", description: "Filter by verdict (allow, halt, escalate)" },
         limit: { type: "number", description: "Max receipts to return" },
       },
     },
     handler: async (args) => {
-      try {
-        const receipts = await client.listReceipts({
-          tool: args.tool as string | undefined,
-          verdict: args.verdict as string | undefined,
-          limit: args.limit as number | undefined,
-        });
-        if (receipts.length === 0) {
-          return { content: "No receipts found matching the query." };
-        }
-        return { content: JSON.stringify(receipts, null, 2) };
-      } catch (err) {
-        return {
-          content: `Receipt query failed: ${err}`,
-          isError: true,
-        };
+      const summaries = await client.receipts({
+        tool: args.tool as string | undefined,
+        verdict: args.verdict as string | undefined,
+        limit: args.limit as number | undefined,
+      });
+      if (summaries.length === 0) {
+        return { content: "No receipts found matching the query." };
       }
+      return { content: JSON.stringify(summaries, null, 2) };
     },
   });
 }

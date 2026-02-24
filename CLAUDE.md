@@ -44,6 +44,10 @@ skills/sanna-governance/
   SKILL.md              # Agent behavioral rules
 constitutions/          # Template constitutions
 tests/                  # vitest (TS) + pytest (Python)
+docs/
+  SETUP.md              # Installation and configuration guide
+  CONSTITUTION_GUIDE.md # How to write and customize constitutions
+README.md               # Project README
 ```
 
 ## Rules

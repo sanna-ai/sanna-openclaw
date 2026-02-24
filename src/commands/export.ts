@@ -1,5 +1,5 @@
 /**
- * /sanna export — export evidence bundle.
+ * /sanna export — export receipts as JSON.
  */
 
 import type { OpenClawPluginAPI } from "../types.js";
@@ -12,19 +12,25 @@ export function registerExportCommand(
   api.registerCommand({
     name: "sanna export",
     handler: async () => {
-      try {
-        const bundle = await client.exportBundle();
+      const summaries = await client.receipts();
 
-        return [
-          `## Evidence Bundle`,
-          ``,
-          "```json",
-          JSON.stringify(bundle, null, 2),
-          "```",
-        ].join("\n");
-      } catch (err) {
-        return `Failed to export evidence bundle: ${err}`;
+      if (summaries.length === 0) {
+        return "No receipts to export.";
       }
+
+      const exported = {
+        exported_at: new Date().toISOString(),
+        receipt_count: summaries.length,
+        receipts: summaries,
+      };
+
+      return [
+        `## Exported ${summaries.length} Receipts`,
+        ``,
+        "```json",
+        JSON.stringify(exported, null, 2),
+        "```",
+      ].join("\n");
     },
   });
 }

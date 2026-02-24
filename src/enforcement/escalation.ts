@@ -15,7 +15,7 @@ export function handleEscalation(
   response: EnforceResponse
 ): ToolResult {
   const checks = response.failed_checks
-    .map((c) => `  - [${c.id}] ${c.description} (${c.section})`)
+    .map((c) => `  - ${c}`)
     .join("\n");
 
   const message = [

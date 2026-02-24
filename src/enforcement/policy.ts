@@ -1,20 +1,30 @@
 /**
- * Gateway deny-list generation.
+ * Deny-list and allow-list generation for Gateway tool policy.
  *
- * Tells the OpenClaw Gateway to block direct access to governed tools,
- * forcing all execution through governance-wrapped versions.
+ * Generates the lists of core tool names to block and sanna_ wrapper
+ * names to allow, based on the governed tools configuration.
  */
 
-import type { OpenClawPluginAPI, SidecarConfig } from "../types.js";
+import { TOOL_MAP } from "../types.js";
 
-/** Apply the deny-list to the Gateway, blocking direct governed tool access */
-export function applyDenyList(api: OpenClawPluginAPI, config: SidecarConfig): void {
-  const denied = config.governedTools;
-  api.log.info(`Blocking direct access to governed tools: ${denied.join(", ")}`);
-  api.denyTools(denied);
+/**
+ * Generate the deny-list of core tool names that should be blocked.
+ *
+ * Only includes tools that have entries in TOOL_MAP — unknown tools
+ * are silently excluded since they have no corresponding wrapper.
+ */
+export function generateDenyList(governedTools: string[]): string[] {
+  return governedTools.filter((tool) => tool in TOOL_MAP);
 }
 
-/** Get the list of denied tool names from config */
-export function getDeniedTools(config: SidecarConfig): readonly string[] {
-  return config.governedTools;
+/**
+ * Generate the allow-list of sanna_ wrapper tool names.
+ *
+ * Returns the corresponding wrapper names from TOOL_MAP for all
+ * governed tools that have entries in the map.
+ */
+export function generateAllowList(governedTools: string[]): string[] {
+  return governedTools
+    .filter((tool) => tool in TOOL_MAP)
+    .map((tool) => TOOL_MAP[tool]);
 }

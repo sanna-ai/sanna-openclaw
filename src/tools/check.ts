@@ -2,59 +2,42 @@
  * sanna_check — voluntary pre-check tool.
  *
  * Allows the agent to check whether an action would be allowed
- * before attempting it. Does not execute anything.
+ * by the governance constitution without executing it.
  */
 
-import type { OpenClawPluginAPI, ToolCallContext } from "../types.js";
+import type { PluginAPI } from "../types.js";
 import { SidecarClient } from "../client.js";
 
 export function registerCheckTool(
-  api: OpenClawPluginAPI,
+  api: PluginAPI,
   client: SidecarClient
 ): void {
   api.registerTool({
     name: "sanna_check",
     description:
-      "Pre-check whether a tool call would be allowed by the governance constitution. " +
-      "Does not execute the tool — only returns the verdict.",
+      "Check if an action would be allowed by the governance constitution without executing it.",
     schema: {
       type: "object",
       properties: {
-        tool: { type: "string", description: "Tool name to check (e.g., exec, write)" },
-        args: { type: "object", description: "Arguments that would be passed to the tool" },
+        tool: { type: "string", description: "Tool name to check" },
+        args: {
+          type: "object",
+          description: "Arguments that would be passed",
+        },
       },
       required: ["tool", "args"],
     },
-    handler: async (args) => {
-      const tool = args.tool as string;
-      const toolArgs = (args.args ?? {}) as Record<string, unknown>;
-
-      const context: ToolCallContext = {
-        session_id: api.getSessionId(),
-        agent_id: api.getAgentId(),
-        conversation_turn: api.getConversationTurn(),
-        timestamp: new Date().toISOString(),
+    handler: async ({ tool, args }) => {
+      const verdict = await client.enforce({
+        tool: tool as string,
+        args: (args ?? {}) as Record<string, unknown>,
+      });
+      return {
+        would_allow: verdict.verdict === "allow",
+        verdict: verdict.verdict,
+        reason: verdict.reason,
+        boundary: verdict.boundary_type,
       };
-
-      try {
-        const response = await client.enforce({ tool, args: toolArgs, context });
-        return {
-          content: JSON.stringify(
-            {
-              verdict: response.verdict,
-              reason: response.reason,
-              failed_checks: response.failed_checks.map((c) => c.id),
-            },
-            null,
-            2
-          ),
-        };
-      } catch (err) {
-        return {
-          content: `Pre-check failed: ${err}`,
-          isError: true,
-        };
-      }
     },
   });
 }

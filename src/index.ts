@@ -4,86 +4,95 @@
  * Called by the OpenClaw Gateway to register the governance plugin.
  */
 
-import type { OpenClawPluginAPI, SidecarConfig } from "./types.js";
+import type { PluginAPI, PluginConfig, Logger } from "./types.js";
 import { DEFAULT_SIDECAR_CONFIG } from "./types.js";
 import { SidecarManager } from "./sidecar.js";
-import { registerWrapperTools } from "./enforcement/gate.js";
-import { applyDenyList } from "./enforcement/policy.js";
-import { registerInterceptHook } from "./enforcement/intercept.js";
+import { SidecarClient } from "./client.js";
+import { registerEnforcementGate } from "./enforcement/gate.js";
+import { registerIntercept } from "./enforcement/intercept.js";
+import { registerAuditHook } from "./hooks/audit.js";
 import { registerCheckTool } from "./tools/check.js";
 import { registerStatusTool } from "./tools/status.js";
-import { registerReceiptTool } from "./tools/receipt.js";
-import { registerAuditHook } from "./hooks/audit.js";
 import { registerDashboardCommand } from "./commands/dashboard.js";
 import { registerReceiptsCommand } from "./commands/receipts.js";
-import { registerVerifyCommand } from "./commands/verify.js";
 import { registerConstitutionCommand } from "./commands/constitution.js";
-import { registerExportCommand } from "./commands/export.js";
-import { registerSetupCommand } from "./commands/setup.js";
 
 export { SidecarManager } from "./sidecar.js";
 export { SidecarClient } from "./client.js";
+export { TOOL_MAP } from "./types.js";
+export { registerEnforcementGate, enforceAndForward, forwardToGateway } from "./enforcement/gate.js";
+export { generateDenyList, generateAllowList } from "./enforcement/policy.js";
+export { registerIntercept } from "./enforcement/intercept.js";
+export { registerAuditHook } from "./hooks/audit.js";
+export { registerCheckTool } from "./tools/check.js";
+export { registerStatusTool } from "./tools/status.js";
+export { registerDashboardCommand, formatDashboard } from "./commands/dashboard.js";
+export { registerReceiptsCommand, parseReceiptFilters, formatReceiptList } from "./commands/receipts.js";
+export { registerConstitutionCommand, formatConstitutionView } from "./commands/constitution.js";
 export type {
-  OpenClawPluginAPI,
-  SidecarConfig,
+  PluginConfig,
+  PluginAPI,
+  ToolDefinition,
   EnforceRequest,
   EnforceResponse,
   AuditRequest,
   AuditResponse,
   Receipt,
-  Verdict,
+  ReceiptSummary,
+  StatusResponse,
 } from "./types.js";
+
+/** Console-based logger for the sidecar manager */
+const consoleLogger: Logger = {
+  info: (msg) => console.log(`[sanna] ${msg}`),
+  warn: (msg) => console.warn(`[sanna] ${msg}`),
+  error: (msg) => console.error(`[sanna] ${msg}`),
+  debug: (msg) => console.debug(`[sanna] ${msg}`),
+};
 
 /**
  * Register the Sanna governance plugin with the OpenClaw Gateway.
  *
  * This is the main entry point called by the Gateway plugin loader.
  */
-export async function register(
-  api: OpenClawPluginAPI,
-  config: Partial<SidecarConfig> = {}
-): Promise<void> {
-  const fullConfig: SidecarConfig = { ...DEFAULT_SIDECAR_CONFIG, ...config };
+export function register(api: PluginAPI): void {
+  // 1. Read config with defaults
+  const raw = api.getConfig() as PluginConfig;
+  const config: PluginConfig = {
+    ...raw,
+    sidecarPort: raw.sidecarPort ?? DEFAULT_SIDECAR_CONFIG.port,
+    sidecarHost: raw.sidecarHost ?? DEFAULT_SIDECAR_CONFIG.host,
+    governedTools: raw.governedTools ?? DEFAULT_SIDECAR_CONFIG.governedTools,
+  };
 
-  api.log.info("Initializing Sanna governance plugin...");
+  // 2. Create the sidecar manager
+  const manager = new SidecarManager(config, consoleLogger);
 
-  // 1. Create the sidecar manager
-  const sidecar = new SidecarManager(fullConfig, api.log);
-  const client = sidecar.getClient();
-
-  // 2. Register sidecar as a managed service (lifecycle: start/stop)
+  // 3. Register as a managed service (lifecycle: start/stop)
   api.registerService({
     name: "sanna-sidecar",
-    start: () => sidecar.start(),
-    stop: () => sidecar.stop(),
+    start: () => manager.start(),
+    stop: () => manager.stop(),
   });
 
-  // 3. Register governance wrapper tools
-  registerWrapperTools(api, client, fullConfig);
+  // 4. Create HTTP client for sidecar communication
+  const client = new SidecarClient(config.sidecarHost, config.sidecarPort);
 
-  // 4. Block direct access to governed tools
-  applyDenyList(api, fullConfig);
+  // 5. Register enforcement gate (wrapper tools)
+  registerEnforcementGate(api, client, config.governedTools);
 
-  // 5. Register the safety net hook
-  registerInterceptHook(api, fullConfig);
-
-  // 6. Register utility tools
-  registerCheckTool(api, client);
-  registerStatusTool(api, client, sidecar);
-  registerReceiptTool(api, client);
+  // 6. Register safety net intercept hook
+  registerIntercept(api, config.governedTools);
 
   // 7. Register audit hook
-  registerAuditHook(api, client, fullConfig);
+  registerAuditHook(api, client);
 
-  // 8. Register slash commands
-  registerDashboardCommand(api, client, sidecar);
+  // 8. Register utility tools
+  registerCheckTool(api, client);
+  registerStatusTool(api, client);
+
+  // 9. Register slash commands
+  registerDashboardCommand(api, client);
   registerReceiptsCommand(api, client);
-  registerVerifyCommand(api, client);
   registerConstitutionCommand(api, client);
-  registerExportCommand(api, client);
-
-  // 9. Register CLI commands
-  registerSetupCommand(api, client);
-
-  api.log.info("Sanna governance plugin initialized successfully");
 }

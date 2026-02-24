@@ -2,47 +2,37 @@
  * tool_result_persist hook — post-execution audit receipts.
  *
  * After a tool execution completes, this hook generates a signed
- * receipt via the sidecar for audit trail purposes.
+ * receipt via the sidecar for audit trail purposes. Audit failures
+ * are caught and logged — they must NEVER break tool execution.
  */
 
-import type { OpenClawPluginAPI, SidecarConfig, HookEvent, HookResult } from "../types.js";
+import type { PluginAPI } from "../types.js";
 import { SidecarClient } from "../client.js";
 
 /** Register the post-execution audit hook */
 export function registerAuditHook(
-  api: OpenClawPluginAPI,
-  client: SidecarClient,
-  config: SidecarConfig
+  api: PluginAPI,
+  client: SidecarClient
 ): void {
-  const auditedTools = config.governedTools.map((t) => `sanna_${t}`);
-
-  api.on("tool_result_persist", async (event: HookEvent): Promise<HookResult> => {
-    if (!auditedTools.includes(event.tool)) {
-      return { allow: true };
-    }
+  api.on("tool_result_persist", async (...hookArgs: unknown[]) => {
+    const event = hookArgs[0] as {
+      tool: string;
+      args: Record<string, unknown>;
+      result?: unknown;
+      error?: string;
+    };
 
     try {
-      const response = await client.audit({
+      await client.audit({
         tool: event.tool,
         args: event.args,
-        result: event.result ?? null,
-        error: null,
-        context: {
-          session_id: api.getSessionId(),
-          agent_id: api.getAgentId(),
-          conversation_turn: api.getConversationTurn(),
-          timestamp: new Date().toISOString(),
-        },
+        result: event.result,
+        error: event.error,
+        context: { timestamp: new Date().toISOString() },
       });
-
-      api.log.debug(
-        `Audit receipt generated: ${response.receipt_id} for ${event.tool}`
-      );
     } catch (err) {
-      api.log.error(`Failed to generate audit receipt for ${event.tool}: ${err}`);
-      // Don't block the result — audit failure is logged but non-fatal
+      // Audit failure must NEVER break tool execution
+      console.error(`[sanna] Audit receipt failed for ${event.tool}:`, err);
     }
-
-    return { allow: true };
   });
 }

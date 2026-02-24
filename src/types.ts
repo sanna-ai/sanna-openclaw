@@ -2,7 +2,131 @@
  * Shared types for the sanna-openclaw plugin.
  */
 
-/** Sidecar configuration */
+// ---------------------------------------------------------------------------
+// Sidecar communication types
+// ---------------------------------------------------------------------------
+
+export interface EnforceRequest {
+  tool: string;
+  args: Record<string, unknown>;
+  context?: Record<string, unknown>;
+  reason?: string;
+}
+
+export interface Receipt {
+  id: string;
+  action: string;
+  verdict: string;
+  reason: string;
+  constitution_hash: string;
+  boundary_type?: string;
+  signature?: string;
+  timestamp: string;
+}
+
+export interface EnforceResponse {
+  verdict: "allow" | "halt" | "escalate";
+  reason: string;
+  boundary_type?: string;
+  failed_checks: string[];
+  receipt?: Receipt;
+}
+
+export interface AuditRequest {
+  tool: string;
+  args: Record<string, unknown>;
+  result?: unknown;
+  error?: string;
+  context?: Record<string, unknown>;
+}
+
+export interface AuditResponse {
+  receipt_id: string | null;
+  status: string;
+}
+
+export interface StatusResponse {
+  constitution: {
+    name: string;
+    version: string;
+    hash: string;
+    boundaries: {
+      can_execute: number;
+      must_escalate: number;
+      cannot_execute: number;
+    };
+  } | null;
+  enforcement_stats: {
+    total: number;
+    allowed: number;
+    halted: number;
+    escalated: number;
+  };
+  sidecar_version: string;
+}
+
+export interface ReceiptSummary {
+  id: string;
+  tool: string;
+  verdict: string;
+  timestamp: string;
+}
+
+// ---------------------------------------------------------------------------
+// Tool mapping: core name → sanna wrapper name
+// ---------------------------------------------------------------------------
+
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  schema: Record<string, unknown>;
+  handler: (args: Record<string, unknown>) => Promise<unknown>;
+}
+
+/**
+ * Minimal OpenClaw plugin API interface for type-checking.
+ *
+ * We don't have OpenClaw as a real dependency — this interface defines
+ * the contract that the real API satisfies at runtime.
+ */
+export interface PluginAPI {
+  registerTool(tool: ToolDefinition): void;
+  on(event: string, handler: (...args: unknown[]) => Promise<void>): void;
+  registerCommand(command: { name: string; handler: (args: string) => Promise<string> }): void;
+  registerCli(cli: { name: string; handler: (args: string[]) => Promise<void> }): void;
+  registerService(service: { name: string; start: () => Promise<void>; stop: () => Promise<void> }): void;
+  getConfig(): PluginConfig;
+}
+
+/** Core tool name → sanna wrapper name */
+export const TOOL_MAP: Record<string, string> = {
+  exec: "sanna_exec",
+  write: "sanna_write",
+  edit: "sanna_edit",
+  apply_patch: "sanna_patch",
+  browser_navigate: "sanna_browse",
+  browser_click: "sanna_click",
+  browser_type: "sanna_type",
+  message: "sanna_message",
+  cron: "sanna_cron",
+};
+
+// ---------------------------------------------------------------------------
+// Plugin configuration
+// ---------------------------------------------------------------------------
+
+export interface PluginConfig {
+  constitutionPath?: string;
+  signingKeyPath?: string;
+  publicKeyPath?: string;
+  receiptStorePath?: string;
+  sidecarPort: number;
+  sidecarHost: string;
+  pythonPath?: string;
+  governedTools: string[];
+}
+
+/** Internal resolved sidecar configuration */
 export interface SidecarConfig {
   host: string;
   port: number;
@@ -25,85 +149,27 @@ export const DEFAULT_SIDECAR_CONFIG: SidecarConfig = {
   signingKeyPath: "",
   publicKeyPath: "",
   receiptStorePath: "",
-  governedTools: ["exec", "write", "edit", "apply_patch", "browser_navigate", "browser_click"],
+  governedTools: [
+    "exec",
+    "write",
+    "edit",
+    "apply_patch",
+    "browser_navigate",
+    "browser_click",
+    "browser_type",
+    "message",
+    "cron",
+  ],
   startupTimeoutMs: 10_000,
   healthIntervalMs: 30_000,
 };
 
-/** Enforcement verdict from the sidecar */
-export type Verdict = "allow" | "deny" | "halt" | "escalate";
-
-/** Request to POST /enforce */
-export interface EnforceRequest {
-  tool: string;
-  args: Record<string, unknown>;
-  context: ToolCallContext;
-}
-
-/** Response from POST /enforce */
-export interface EnforceResponse {
-  verdict: Verdict;
-  reason: string;
-  boundary_type: string | null;
-  failed_checks: FailedCheck[];
-  receipt: Receipt | null;
-}
-
-/** A constitution check that failed during enforcement */
-export interface FailedCheck {
-  id: string;
-  section: string;
-  description: string;
-  effect: string;
-}
-
-/** Request to POST /audit */
-export interface AuditRequest {
-  tool: string;
-  args: Record<string, unknown>;
-  result: string | null;
-  error: string | null;
-  context: ToolCallContext;
-}
-
-/** Response from POST /audit */
-export interface AuditResponse {
-  receipt_id: string;
-}
-
-/** Context provided to the sidecar for evaluation */
-export interface ToolCallContext {
-  session_id: string;
-  agent_id: string;
-  conversation_turn: number;
-  timestamp: string;
-}
-
-/** A signed receipt */
-export interface Receipt {
-  receipt_id: string;
-  tool: string;
-  args_hash: string;
-  verdict: string;
-  timestamp: string;
-  signature: string;
-  public_key: string;
-}
-
-/** Sidecar health check response */
-export interface HealthResponse {
-  status: "ok" | "degraded" | "error";
-  version: string;
-}
-
-/** Sidecar status response */
-export interface StatusResponse {
-  constitution: Record<string, unknown>;
-  enforcement_stats: Record<string, unknown>;
-}
+// ---------------------------------------------------------------------------
+// OpenClaw plugin API surface
+// ---------------------------------------------------------------------------
 
 /**
- * OpenClaw plugin API surface.
+ * OpenClaw plugin API.
  *
  * Reference:
  *   api.registerTool({ name, description, schema, handler })

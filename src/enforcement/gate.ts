@@ -1,126 +1,107 @@
 /**
- * Wrapper tool registration and enforcement flow.
+ * Enforcement gate: wrapper tools that replace governed core tools.
  *
- * Registers governance-wrapped versions of core tools (sanna_exec, sanna_write, etc.)
- * that evaluate actions against the constitution before executing them.
+ * Registers sanna_* wrapper tools that evaluate actions against the
+ * constitution via the sidecar before allowing execution.
  */
 
-import type {
-  OpenClawPluginAPI,
-  SidecarConfig,
-  ToolResult,
-  ToolCallContext,
-} from "../types.js";
+import type { PluginAPI } from "../types.js";
+import { TOOL_MAP } from "../types.js";
 import { SidecarClient } from "../client.js";
-import { handleEscalation } from "./escalation.js";
 
 /**
- * Build the mapping from wrapper tool names to governed core tool names.
- * Core tools: exec, write, edit, apply_patch, browser_navigate, browser_click
- * Wrapper tools: sanna_exec, sanna_write, sanna_edit, etc.
+ * Register wrapper tools for all governed core tools.
+ *
+ * For each tool in governedTools that exists in TOOL_MAP, registers a
+ * sanna_* wrapper tool that calls enforceAndForward before execution.
+ * Tools not in TOOL_MAP are skipped with a warning.
  */
-function buildWrapperMap(governedTools: string[]): Record<string, string> {
-  const map: Record<string, string> = {};
-  for (const tool of governedTools) {
-    map[`sanna_${tool}`] = tool;
-  }
-  return map;
-}
-
-/** Register all wrapper tools with the OpenClaw API */
-export function registerWrapperTools(
-  api: OpenClawPluginAPI,
+export function registerEnforcementGate(
+  api: PluginAPI,
   client: SidecarClient,
-  config: SidecarConfig
+  governedTools: string[]
 ): void {
-  const wrapperMap = buildWrapperMap(config.governedTools);
+  for (const coreTool of governedTools) {
+    const wrapperName = TOOL_MAP[coreTool];
+    if (!wrapperName) {
+      console.warn(
+        `[sanna] Unknown governed tool "${coreTool}" not in TOOL_MAP, skipping`
+      );
+      continue;
+    }
 
-  for (const [wrapperName, coreTool] of Object.entries(wrapperMap)) {
     api.registerTool({
       name: wrapperName,
-      description: `Governance-enforced wrapper for ${coreTool}. Evaluates the action against the loaded Sanna constitution before execution.`,
-      schema: {
-        type: "object",
-        properties: {
-          args: {
-            type: "object",
-            description: `Arguments to pass to the underlying ${coreTool} tool`,
-          },
-        },
-        required: ["args"],
-      },
-      handler: createEnforcementHandler(api, client, coreTool),
+      description: `[Sanna Governed] ${coreTool} — enforced by constitution`,
+      schema: { type: "object", additionalProperties: true },
+      handler: async (args) => enforceAndForward(client, coreTool, args),
     });
   }
 }
 
-/** Create an enforcement handler for a specific core tool */
-function createEnforcementHandler(
-  api: OpenClawPluginAPI,
+/**
+ * Enforce a tool call against the constitution and handle the verdict.
+ *
+ * Returns a result object depending on verdict:
+ * - allow: { forwarded: true, tool, args, receipt_id }
+ * - halt: { error: true, message: "GOVERNANCE HALT: ..." }
+ * - escalate: { error: true, message: "GOVERNANCE ESCALATION: ..." }
+ */
+export async function enforceAndForward(
   client: SidecarClient,
-  coreTool: string
-): (args: Record<string, unknown>) => Promise<ToolResult> {
-  return async (args: Record<string, unknown>): Promise<ToolResult> => {
-    const innerArgs = (args.args ?? args) as Record<string, unknown>;
+  tool: string,
+  args: Record<string, unknown>
+): Promise<unknown> {
+  const response = await client.enforce({ tool, args });
 
-    const context: ToolCallContext = {
-      session_id: api.getSessionId(),
-      agent_id: api.getAgentId(),
-      conversation_turn: api.getConversationTurn(),
-      timestamp: new Date().toISOString(),
-    };
-
-    api.log.debug(`Enforcing ${coreTool} against constitution`);
-
-    let response;
-    try {
-      response = await client.enforce({ tool: coreTool, args: innerArgs, context });
-    } catch (err) {
-      // Sidecar unreachable = HALT. Never fail open.
-      api.log.error(`Constitution enforcement failed: ${err}`);
+  switch (response.verdict) {
+    case "allow":
+      // Phase 0.5 will replace this with: return await forwardToGateway(tool, args);
       return {
-        content: `HALT: Governance sidecar unreachable. Tool execution blocked for safety. Error: ${err}`,
-        isError: true,
+        forwarded: true,
+        tool,
+        args,
+        receipt_id: response.receipt?.id ?? null,
       };
-    }
 
-    switch (response.verdict) {
-      case "allow":
-        api.log.info(
-          `${coreTool} allowed (receipt: ${response.receipt?.receipt_id ?? "none"})`
-        );
-        return {
-          content: JSON.stringify({
-            _sanna_passthrough: true,
-            tool: coreTool,
-            args: innerArgs,
-            receipt_id: response.receipt?.receipt_id ?? null,
-          }),
-        };
+    case "halt":
+      return {
+        error: true,
+        message:
+          `GOVERNANCE HALT: ${response.reason}\n` +
+          `Boundary: ${response.boundary_type}\n` +
+          `Receipt: ${response.receipt?.id}`,
+      };
 
-      case "deny":
-        api.log.warn(`${coreTool} DENIED: ${response.reason}`);
-        return {
-          content: `Action denied by governance constitution.\nReason: ${response.reason}\nFailed checks: ${response.failed_checks.map((c) => c.id).join(", ")}`,
-          isError: true,
-        };
+    case "escalate":
+      return {
+        error: true,
+        message:
+          `GOVERNANCE ESCALATION: This action requires user approval.\n` +
+          `Reason: ${response.reason}\n` +
+          `Use /sanna approve ${response.receipt?.id} to approve.`,
+      };
 
-      case "halt":
-        api.log.error(`${coreTool} HALTED: ${response.reason}`);
-        return {
-          content: `HALT: ${response.reason}`,
-          isError: true,
-        };
+    default:
+      // Unknown verdict — fail closed
+      return {
+        error: true,
+        message: `GOVERNANCE HALT: Unknown verdict "${response.verdict}"`,
+      };
+  }
+}
 
-      case "escalate":
-        api.log.warn(`${coreTool} requires escalation`);
-        return handleEscalation(api, coreTool, innerArgs, response);
-
-      default:
-        return {
-          content: `HALT: Unknown verdict "${response.verdict}" from constitution enforcement`,
-          isError: true,
-        };
-    }
-  };
+/**
+ * Forward a tool call to the Gateway for execution.
+ *
+ * Placeholder — real implementation requires Phase 0.5 validation
+ * of the Gateway invoke API shape.
+ */
+export async function forwardToGateway(
+  tool: string,
+  _args: Record<string, unknown>
+): Promise<unknown> {
+  throw new Error(
+    `Gateway forwarding not yet implemented for tool: ${tool}. Requires Phase 0.5 validation.`
+  );
 }
