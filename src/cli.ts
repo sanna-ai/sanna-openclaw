@@ -7,7 +7,6 @@
 
 import type { SannaConfig, PluginAPI } from "./types.js";
 import { fetchWithTimeout, readHooksEnabled } from "./http.js";
-import { existsSync } from "node:fs";
 
 const SIDECAR_TIMEOUT_MS = 5_000;
 
@@ -143,6 +142,7 @@ export function registerCli(api: PluginAPI, config: SannaConfig): void {
       // openclaw sanna doctor
       addCommand(sanna, "doctor", "Check governance readiness", async () => {
         let allPassed = true;
+        let healthData: Record<string, unknown> | null = null;
 
         // 1. hooks.internal.enabled
         const hooksEnabled = readHooksEnabled();
@@ -161,6 +161,7 @@ export function registerCli(api: PluginAPI, config: SannaConfig): void {
             SIDECAR_TIMEOUT_MS
           );
           if (res.ok) {
+            healthData = (await res.json()) as Record<string, unknown>;
             console.log("PASS  sidecar reachable");
           } else {
             console.log(`FAIL  sidecar returned HTTP ${res.status}`);
@@ -171,15 +172,19 @@ export function registerCli(api: PluginAPI, config: SannaConfig): void {
           allPassed = false;
         }
 
-        // 3. constitution exists
-        const constitutionPath = config.constitutionPath;
-        if (constitutionPath && existsSync(constitutionPath)) {
-          console.log(`PASS  constitution exists: ${constitutionPath}`);
-        } else if (constitutionPath) {
-          console.log(`FAIL  constitution not found: ${constitutionPath}`);
-          allPassed = false;
+        // 3. constitution loaded (from sidecar /health response)
+        if (healthData) {
+          const constitutionInfo =
+            healthData.constitution ||
+            healthData.constitution_path ||
+            healthData.constitution_loaded;
+          if (constitutionInfo) {
+            console.log(`PASS  constitution: ${constitutionInfo}`);
+          } else {
+            console.log("WARN  sidecar running but no constitution loaded");
+          }
         } else {
-          console.log("WARN  no constitutionPath configured");
+          console.log("WARN  could not check constitution (sidecar unreachable)");
         }
 
         // Summary

@@ -8,7 +8,15 @@
   "openclaw": {
     "extensions": ["./dist/index.js"]
   },
+  "files": [
+    "dist/**/*",
+    "constitutions/**/*",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
+    "prebuild": "rm -rf dist",
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",

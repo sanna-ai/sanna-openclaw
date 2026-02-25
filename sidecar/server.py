@@ -106,6 +106,7 @@ class HealthResponse(BaseModel):
     status: str  # ok | degraded | error
     version: str
     receipt_store: str = ""
+    constitution: str = ""
 
 
 class StatusResponse(BaseModel):
@@ -332,6 +333,7 @@ def create_app(
             status=status,
             version=SANNA_VERSION,
             receipt_store=receipt_store_dir,
+            constitution=constitution_meta.get("path", "") if constitution_meta.get("loaded") else "",
         )
 
     # -----------------------------------------------------------------------
