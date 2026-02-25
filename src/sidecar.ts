@@ -6,7 +6,12 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { SannaConfig, PluginAPI } from "./types.js";
+
+/** Plugin root directory (parent of dist/). */
+const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 const HEALTH_RETRIES = 10;
 const HEALTH_DELAY_MS = 500;
@@ -19,14 +24,21 @@ export function registerSidecar(api: PluginAPI, config: SannaConfig): void {
 
     start: async () => {
       const port = config.sidecarPort ?? 18890;
-      const args = ["-m", "sidecar.server", "--port", String(port)];
+      const args = ["-m", "sidecar", "--port", String(port)];
       if (config.constitutionPath) {
         args.push("--constitution", config.constitutionPath);
       }
 
+      // Add plugin root to PYTHONPATH so Python can find the sidecar package
+      const existingPythonPath = process.env.PYTHONPATH ?? "";
+      const pythonPath = existingPythonPath
+        ? `${PLUGIN_ROOT}:${existingPythonPath}`
+        : PLUGIN_ROOT;
+
       child = spawn("python3", args, {
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env },
+        cwd: PLUGIN_ROOT,
+        env: { ...process.env, PYTHONPATH: pythonPath },
       });
 
       child.stdout?.on("data", (data: Buffer) => {

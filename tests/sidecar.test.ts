@@ -98,8 +98,12 @@ describe("registerSidecar", () => {
 
     expect(mockSpawn).toHaveBeenCalledWith(
       "python3",
-      ["-m", "sidecar.server", "--port", "18890", "--constitution", "/path/to/constitution.yaml"],
-      expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] })
+      ["-m", "sidecar", "--port", "18890", "--constitution", "/path/to/constitution.yaml"],
+      expect.objectContaining({
+        stdio: ["ignore", "pipe", "pipe"],
+        cwd: expect.any(String),
+        env: expect.objectContaining({ PYTHONPATH: expect.stringContaining("sanna-openclaw") }),
+      })
     );
   });
 
