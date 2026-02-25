@@ -4,7 +4,7 @@ How to write and customize Sanna constitutions for OpenClaw.
 
 ## Overview
 
-A constitution is a YAML file that defines what an agent can and cannot do. `@sanna/core` evaluates every tool call against it via the `before_tool_call` hook. Verdicts are `allow`, `halt`, or `escalate`.
+A constitution is a YAML file that defines what an agent can and cannot do. `@sanna-ai/core` evaluates every tool call against it via the `before_tool_call` hook. Verdicts are `allow`, `halt`, or `escalate`.
 
 ## YAML Schema
 

@@ -3,14 +3,14 @@ import type { PluginAPI, SannaConfig } from "../src/types.js";
 import type { CliDeps } from "../src/cli.js";
 
 // ---------------------------------------------------------------------------
-// Mock @sanna/core and http
+// Mock @sanna-ai/core and http
 // ---------------------------------------------------------------------------
 
 const mockStoreCount = vi.fn(() => 0);
 const mockStoreQuery = vi.fn(() => []);
 const mockReadHooksEnabled = vi.fn(() => true);
 
-vi.mock("@sanna/core", () => ({
+vi.mock("@sanna-ai/core", () => ({
   ReceiptStore: vi.fn(),
 }));
 

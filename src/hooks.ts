@@ -2,7 +2,7 @@
  * Plugin hooks — primary enforcement point for Sanna governance.
  *
  * before_tool_call — PRIMARY enforcement. Fires for every tool call in the
- * agent loop. Evaluates authority via @sanna/core and blocks or allows.
+ * agent loop. Evaluates authority via @sanna-ai/core and blocks or allows.
  *
  * after_tool_call — observability. Logs receipt info after allowed calls.
  *
@@ -10,13 +10,13 @@
  */
 
 import type { SannaConfig, PluginAPI } from "./types.js";
-import type { Constitution, AuthorityDecision } from "@sanna/core";
+import type { Constitution, AuthorityDecision } from "@sanna-ai/core";
 import {
   evaluateAuthority,
   generateReceipt,
   signReceipt,
   ReceiptStore,
-} from "@sanna/core";
+} from "@sanna-ai/core";
 import type { KeyObject } from "node:crypto";
 
 export interface HookDeps {
@@ -69,7 +69,7 @@ export function registerHooks(
         return undefined;
       }
 
-      // Evaluate authority via @sanna/core
+      // Evaluate authority via @sanna-ai/core
       let decision: AuthorityDecision;
       try {
         decision = evaluateAuthority(toolName, params, constitution);

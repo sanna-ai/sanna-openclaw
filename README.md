@@ -4,7 +4,7 @@ Constitution enforcement and cryptographic receipts for OpenClaw agents.
 
 ## What It Does
 
-sanna is an OpenClaw Gateway plugin that enforces governance constitutions on AI agent tool execution. Every tool call in the agent loop passes through a `before_tool_call` hook that evaluates the action against a YAML constitution via `@sanna/core` — in-process, with zero external dependencies. Actions are allowed, blocked, or escalated for human approval, and every decision gets an Ed25519-signed cryptographic receipt persisted before the response is returned.
+sanna is an OpenClaw Gateway plugin that enforces governance constitutions on AI agent tool execution. Every tool call in the agent loop passes through a `before_tool_call` hook that evaluates the action against a YAML constitution via `@sanna-ai/core` — in-process, with zero external dependencies. Actions are allowed, blocked, or escalated for human approval, and every decision gets an Ed25519-signed cryptographic receipt persisted before the response is returned.
 
 ## Architecture
 
@@ -14,7 +14,7 @@ sanna is an OpenClaw Gateway plugin that enforces governance constitutions on AI
  │           │─ tool call ─>│  before_tool_call hook (sanna)      │
  │           │              │                                     │
  │           │              │  1. evaluateAuthority(tool, params)  │
- │           │              │     via @sanna/core (in-process)     │
+ │           │              │     via @sanna-ai/core (in-process)     │
  │           │              │  2. generateReceipt() + signReceipt()│
  │           │              │  3. ReceiptStore.save() (write-ahead)│
  │           │              │  4. Return allow / block to Gateway  │
@@ -23,7 +23,7 @@ sanna is an OpenClaw Gateway plugin that enforces governance constitutions on AI
                            └─────────────────────────────────────┘
 ```
 
-The `before_tool_call` hook is the primary enforcement point. It fires for every tool call in the agent loop, evaluates authority via `@sanna/core`, and returns `{ block: true }` or `{ blocked: false }`. No wrapper tools, no tool renaming — native tools execute normally and the hook gates them transparently.
+The `before_tool_call` hook is the primary enforcement point. It fires for every tool call in the agent loop, evaluates authority via `@sanna-ai/core`, and returns `{ block: true }` or `{ blocked: false }`. No wrapper tools, no tool renaming — native tools execute normally and the hook gates them transparently.
 
 **Fail-closed**: if evaluation throws or receipt persistence fails, the action is blocked in enforce mode. In audit mode, decisions are logged but execution is not blocked.
 

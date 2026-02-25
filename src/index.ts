@@ -5,7 +5,7 @@
  *
  * Architecture: before_tool_call hook is the primary enforcement point.
  * Every tool call in the agent loop passes through the hook, which evaluates
- * authority via @sanna/core in-process. No sidecar, no HTTP, no Python.
+ * authority via @sanna-ai/core in-process. No sidecar, no HTTP, no Python.
  */
 
 import { resolve, dirname } from "node:path";
@@ -16,8 +16,8 @@ import type { KeyObject } from "node:crypto";
 import type { PluginAPI } from "./types.js";
 import { resolveConfig } from "./config.js";
 import { readHooksEnabled } from "./http.js";
-import { loadConstitution, loadPrivateKey, ReceiptStore } from "@sanna/core";
-import type { Constitution } from "@sanna/core";
+import { loadConstitution, loadPrivateKey, ReceiptStore } from "@sanna-ai/core";
+import type { Constitution } from "@sanna-ai/core";
 import { registerHooks } from "./hooks.js";
 import { registerGatewayMethods } from "./gateway.js";
 import { registerCli } from "./cli.js";

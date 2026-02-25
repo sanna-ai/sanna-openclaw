@@ -2,7 +2,7 @@
  * Constitution template validation.
  *
  * Validates that all YAML templates in constitutions/ are valid sanna
- * constitutions with the required fields. Uses @sanna/core for
+ * constitutions with the required fields. Uses @sanna-ai/core for
  * authoritative validation.
  */
 
@@ -17,16 +17,16 @@ const yamlFiles = readdirSync(CONSTITUTIONS_DIR)
   .filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"))
   .sort();
 
-// Check if @sanna/core is available for deep validation
-let sannaCore: typeof import("@sanna/core") | null = null;
+// Check if @sanna-ai/core is available for deep validation
+let sannaCore: typeof import("@sanna-ai/core") | null = null;
 try {
-  sannaCore = await import("@sanna/core");
+  sannaCore = await import("@sanna-ai/core");
 } catch {
-  // @sanna/core not available
+  // @sanna-ai/core not available
 }
 
 // ---------------------------------------------------------------------------
-// Basic YAML structure tests (no @sanna/core needed)
+// Basic YAML structure tests (no @sanna-ai/core needed)
 // ---------------------------------------------------------------------------
 
 describe("constitution templates", () => {
@@ -74,12 +74,12 @@ describe("constitution templates", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Deep validation via @sanna/core
+// Deep validation via @sanna-ai/core
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!sannaCore)("constitution templates: sanna validation", () => {
   for (const file of yamlFiles) {
-    it(`${file} loads successfully with @sanna/core`, () => {
+    it(`${file} loads successfully with @sanna-ai/core`, () => {
       const fullPath = join(CONSTITUTIONS_DIR, file);
       const constitution = sannaCore!.loadConstitution(fullPath);
       expect(constitution.identity.agent_name).toBeTruthy();

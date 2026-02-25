@@ -6,8 +6,8 @@
  */
 
 import type { SannaConfig, PluginAPI } from "./types.js";
-import type { Constitution } from "@sanna/core";
-import { ReceiptStore } from "@sanna/core";
+import type { Constitution } from "@sanna-ai/core";
+import { ReceiptStore } from "@sanna-ai/core";
 import { readHooksEnabled } from "./http.js";
 
 export interface CliDeps {

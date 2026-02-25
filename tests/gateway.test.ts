@@ -3,13 +3,13 @@ import type { PluginAPI, SannaConfig } from "../src/types.js";
 import { registerGatewayMethods, type GatewayDeps } from "../src/gateway.js";
 
 // ---------------------------------------------------------------------------
-// Mock @sanna/core ReceiptStore
+// Mock @sanna-ai/core ReceiptStore
 // ---------------------------------------------------------------------------
 
 const mockStoreCount = vi.fn(() => 0);
 const mockStoreQuery = vi.fn(() => []);
 
-vi.mock("@sanna/core", () => ({
+vi.mock("@sanna-ai/core", () => ({
   ReceiptStore: vi.fn(),
 }));
 

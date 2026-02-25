@@ -3,7 +3,7 @@ import type { PluginAPI, SannaConfig } from "../src/types.js";
 import type { HookDeps } from "../src/hooks.js";
 
 // ---------------------------------------------------------------------------
-// Mock @sanna/core
+// Mock @sanna-ai/core
 // ---------------------------------------------------------------------------
 
 const mockEvaluateAuthority = vi.fn();
@@ -11,7 +11,7 @@ const mockGenerateReceipt = vi.fn();
 const mockSignReceipt = vi.fn();
 const mockStoreSave = vi.fn();
 
-vi.mock("@sanna/core", () => ({
+vi.mock("@sanna-ai/core", () => ({
   evaluateAuthority: (...args: unknown[]) => mockEvaluateAuthority(...args),
   generateReceipt: (...args: unknown[]) => mockGenerateReceipt(...args),
   signReceipt: (...args: unknown[]) => mockSignReceipt(...args),
