@@ -105,10 +105,13 @@ export function registerHooks(
             policy_hash: constitution.policy_hash ?? "",
           },
           enforcement: {
-            tool: toolName,
-            decision: decision.decision,
+            action: toolName,
             reason: decision.reason,
-            boundary_type: decision.boundary_type,
+            failed_checks: decision.decision !== "allow"
+              ? [`${decision.boundary_type}: ${decision.reason}`]
+              : [],
+            enforcement_mode: config.enforcementMode ?? "enforce",
+            timestamp: new Date().toISOString(),
           },
         }) as unknown as Record<string, unknown>;
 

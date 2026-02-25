@@ -49,9 +49,9 @@ function createMockApi(configOverrides?: Record<string, unknown>): PluginAPI {
 const fakeConstitution = {
   schema_version: "0.1.0",
   identity: { agent_name: "test-agent", domain: "testing", description: "test", extensions: {} },
-  provenance: {},
+  provenance: { authored_by: "test", approved_by: [], approval_date: "", approval_method: "", change_history: [], signature: null },
   boundaries: [],
-  trust_tiers: { tiers: [] },
+  trust_tiers: { autonomous: [], requires_approval: [], prohibited: [] },
   halt_conditions: [],
   invariants: [],
   policy_hash: "test-hash",

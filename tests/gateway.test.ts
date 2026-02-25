@@ -51,9 +51,9 @@ const fakeDeps: GatewayDeps = {
   constitution: {
     schema_version: "0.1.0",
     identity: { agent_name: "test-agent", domain: "testing", description: "test", extensions: {} },
-    provenance: {} as GatewayDeps["constitution"]["provenance"],
+    provenance: { authored_by: "test", approved_by: [], approval_date: "", approval_method: "", change_history: [], signature: null },
     boundaries: [],
-    trust_tiers: { tiers: [] } as unknown as GatewayDeps["constitution"]["trust_tiers"],
+    trust_tiers: { autonomous: [], requires_approval: [], prohibited: [] },
     halt_conditions: [],
     invariants: [],
     policy_hash: "hash-abc",
