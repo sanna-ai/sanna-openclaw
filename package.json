@@ -1,5 +1,5 @@
 {
-  "name": "@sanna/openclaw",
+  "name": "sanna",
   "version": "0.1.0",
   "description": "OpenClaw plugin that enforces Sanna governance constitutions on AI agent tool execution",
   "type": "module",
