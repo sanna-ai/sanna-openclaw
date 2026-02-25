@@ -2,11 +2,11 @@
  * Tool registration — wrapper tools that replace governed core tools.
  *
  * Each governed tool gets a sanna_* wrapper that enforces the constitution
- * before forwarding execution to the gateway via /tools/invoke.
+ * before executing the tool directly in-process.
  */
 
 import type { SannaConfig, PluginAPI } from "./types.js";
-import { enforceAndForward } from "./enforce.js";
+import { enforceAndExecute } from "./enforce.js";
 
 /** Composite tools that use an "action" parameter to select behavior. */
 const COMPOSITE_TOOLS = new Set([
@@ -117,7 +117,7 @@ export function registerTools(api: PluginAPI, config: SannaConfig): void {
               ? params.sessionKey
               : undefined;
 
-          return enforceAndForward(config, toolName, params, action, {
+          return enforceAndExecute(config, toolName, params, action, {
             session: sessionKey || _id,
           });
         },

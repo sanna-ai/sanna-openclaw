@@ -7,10 +7,10 @@ import { GOVERNED_TOOLS_DEFAULT } from "../src/config.js";
 // Mock enforce module
 // ---------------------------------------------------------------------------
 
-const mockEnforceAndForward = vi.fn();
+const mockEnforceAndExecute = vi.fn();
 
 vi.mock("../src/enforce.js", () => ({
-  enforceAndForward: (...args: unknown[]) => mockEnforceAndForward(...args),
+  enforceAndExecute: (...args: unknown[]) => mockEnforceAndExecute(...args),
 }));
 
 // ---------------------------------------------------------------------------
@@ -174,7 +174,7 @@ describe("composite tool wrapper", () => {
       governedTools: ["browser"],
     });
 
-    mockEnforceAndForward.mockResolvedValueOnce({
+    mockEnforceAndExecute.mockResolvedValueOnce({
       content: [{ type: "text", text: "ok" }],
     });
 
@@ -184,7 +184,7 @@ describe("composite tool wrapper", () => {
       url: "https://example.com",
     });
 
-    expect(mockEnforceAndForward).toHaveBeenCalledWith(
+    expect(mockEnforceAndExecute).toHaveBeenCalledWith(
       expect.objectContaining({ governedTools: ["browser"] }),
       "browser",
       { action: "navigate", url: "https://example.com" },
@@ -200,14 +200,14 @@ describe("composite tool wrapper", () => {
       governedTools: ["exec"],
     });
 
-    mockEnforceAndForward.mockResolvedValueOnce({
+    mockEnforceAndExecute.mockResolvedValueOnce({
       content: [{ type: "text", text: "ok" }],
     });
 
     const tool = api._tools[0].def;
     await tool.execute("call-1", { command: "ls" });
 
-    expect(mockEnforceAndForward).toHaveBeenCalledWith(
+    expect(mockEnforceAndExecute).toHaveBeenCalledWith(
       expect.objectContaining({ governedTools: ["exec"] }),
       "exec",
       { command: "ls" },
@@ -232,7 +232,7 @@ describe("simple tool wrapper", () => {
     const writeResult = {
       content: [{ type: "text", text: "File written" }],
     };
-    mockEnforceAndForward.mockResolvedValueOnce(writeResult);
+    mockEnforceAndExecute.mockResolvedValueOnce(writeResult);
 
     const tool = api._tools[0].def;
     const result = await tool.execute("call-1", {
@@ -240,7 +240,7 @@ describe("simple tool wrapper", () => {
       content: "hello",
     });
 
-    expect(mockEnforceAndForward).toHaveBeenCalledWith(
+    expect(mockEnforceAndExecute).toHaveBeenCalledWith(
       expect.objectContaining({ governedTools: ["write"] }),
       "write",
       { path: "/tmp/test.txt", content: "hello" },
@@ -263,14 +263,14 @@ describe("session context", () => {
       governedTools: ["exec"],
     });
 
-    mockEnforceAndForward.mockResolvedValueOnce({
+    mockEnforceAndExecute.mockResolvedValueOnce({
       content: [{ type: "text", text: "ok" }],
     });
 
     const tool = api._tools[0].def;
     await tool.execute("my-call-id", { command: "ls" });
 
-    expect(mockEnforceAndForward).toHaveBeenCalledWith(
+    expect(mockEnforceAndExecute).toHaveBeenCalledWith(
       expect.anything(),
       "exec",
       { command: "ls" },
@@ -286,14 +286,14 @@ describe("session context", () => {
       governedTools: ["exec"],
     });
 
-    mockEnforceAndForward.mockResolvedValueOnce({
+    mockEnforceAndExecute.mockResolvedValueOnce({
       content: [{ type: "text", text: "ok" }],
     });
 
     const tool = api._tools[0].def;
     await tool.execute("call-id", { command: "ls", sessionKey: "explicit-session" });
 
-    expect(mockEnforceAndForward).toHaveBeenCalledWith(
+    expect(mockEnforceAndExecute).toHaveBeenCalledWith(
       expect.anything(),
       "exec",
       { command: "ls", sessionKey: "explicit-session" },

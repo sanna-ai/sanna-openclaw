@@ -1,9 +1,11 @@
 /**
- * Sidecar communication + Gateway /tools/invoke forwarding.
+ * Sidecar communication + direct tool execution.
  *
- * enforce()          — POST to sidecar /enforce (fail closed on error)
- * forward()          — POST to gateway /tools/invoke (throws on error)
- * enforceAndForward() — combined flow: enforce → deny/escalate/forward
+ * enforce()           — POST to sidecar /enforce (fail closed on error)
+ * directExecute()     — execute tool in-process (see execute.ts)
+ * enforceAndExecute() — combined flow: enforce → deny/escalate/execute
+ *
+ * forward() is retained for potential future use but is not on the main path.
  */
 
 import type {
@@ -14,6 +16,7 @@ import type {
   ToolResult,
 } from "./types.js";
 import { fetchWithTimeout, readGatewayToken } from "./http.js";
+import { directExecute } from "./execute.js";
 
 const SIDECAR_TIMEOUT_MS = 5_000;
 const GATEWAY_TIMEOUT_MS = 30_000;
@@ -66,7 +69,7 @@ export async function enforce(
 }
 
 // ---------------------------------------------------------------------------
-// forward — POST to gateway /tools/invoke
+// forward — POST to gateway /tools/invoke (retained, not on main path)
 // ---------------------------------------------------------------------------
 
 /** Forward a tool call to the Gateway. Throws on error. */
@@ -104,11 +107,11 @@ export async function forward(
 }
 
 // ---------------------------------------------------------------------------
-// enforceAndForward — combined flow
+// enforceAndExecute — combined flow
 // ---------------------------------------------------------------------------
 
-/** Enforce via sidecar, then forward to gateway if allowed. */
-export async function enforceAndForward(
+/** Enforce via sidecar, then execute directly if allowed. */
+export async function enforceAndExecute(
   config: SannaConfig,
   tool: string,
   args: Record<string, unknown>,
@@ -158,16 +161,12 @@ export async function enforceAndForward(
     return escResult as unknown as ToolResult;
   }
 
-  // decision === 'allow' — forward to gateway
-  const gatewayResult = (await forward(config, tool, args, action)) as Record<
-    string,
-    unknown
-  >;
-  // Attach receipt hash for tool_result_persist to pick up
+  // decision === 'allow' — execute directly
+  const result = directExecute(tool, args) as unknown as Record<string, unknown>;
   if (response.receipt_hash) {
-    gatewayResult._sanna_receipt_hash = response.receipt_hash;
+    result._sanna_receipt_hash = response.receipt_hash;
   }
-  return gatewayResult as unknown as ToolResult;
+  return result as unknown as ToolResult;
 }
 
 // ---------------------------------------------------------------------------

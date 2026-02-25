@@ -6,7 +6,7 @@ vi.mock("node:fs", () => ({
   readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
 }));
 
-import { fetchWithTimeout, readGatewayToken } from "../src/http.js";
+import { fetchWithTimeout } from "../src/http.js";
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -83,8 +83,6 @@ describe("fetchWithTimeout", () => {
 
 describe("readGatewayToken", () => {
   it("reads token from openclaw.json gateway.auth.token", async () => {
-    // Reset cached token by re-importing with fresh module
-    // Since the cache is module-level, we test via the mock behavior
     mockReadFileSync.mockReturnValueOnce(
       JSON.stringify({ gateway: { auth: { token: "my-secret-token" } } })
     );
@@ -118,5 +116,28 @@ describe("readGatewayToken", () => {
     const token = mod.readGatewayToken();
 
     expect(token).toBe("");
+  });
+});
+
+describe("readWorkspaceRoot", () => {
+  it("reads workspace from openclaw.json agents.defaults.workspace", async () => {
+    mockReadFileSync.mockReturnValueOnce(
+      JSON.stringify({ agents: { defaults: { workspace: "/custom/workspace" } } })
+    );
+
+    const mod = await import("../src/http.js?" + Date.now());
+    const root = mod.readWorkspaceRoot();
+
+    expect(root).toBe("/custom/workspace");
+  });
+
+  it("defaults to ~/.openclaw/workspace when not configured", async () => {
+    mockReadFileSync.mockReturnValueOnce(JSON.stringify({}));
+
+    const mod = await import("../src/http.js?" + Date.now());
+    const root = mod.readWorkspaceRoot();
+
+    expect(root).toContain(".openclaw");
+    expect(root).toContain("workspace");
   });
 });

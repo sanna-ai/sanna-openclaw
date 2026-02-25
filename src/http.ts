@@ -21,21 +21,43 @@ export function fetchWithTimeout(
 }
 
 /**
- * Read the gateway auth token from ~/.openclaw/openclaw.json.
- * Cached after first read — returns empty string on any failure.
+ * Read and cache ~/.openclaw/openclaw.json (parsed once).
  */
-let _cachedToken: string | undefined;
+let _cachedOpenclawConfig: Record<string, unknown> | undefined;
 
-export function readGatewayToken(): string {
-  if (_cachedToken !== undefined) return _cachedToken;
+function readOpenclawConfig(): Record<string, unknown> {
+  if (_cachedOpenclawConfig !== undefined) return _cachedOpenclawConfig;
 
   try {
     const configPath = join(homedir(), ".openclaw", "openclaw.json");
-    const raw = JSON.parse(readFileSync(configPath, "utf-8"));
-    _cachedToken = String(raw?.gateway?.auth?.token ?? "");
+    _cachedOpenclawConfig = JSON.parse(readFileSync(configPath, "utf-8"));
   } catch {
-    _cachedToken = "";
+    _cachedOpenclawConfig = {};
   }
 
-  return _cachedToken;
+  return _cachedOpenclawConfig!;
+}
+
+/**
+ * Read the gateway auth token from ~/.openclaw/openclaw.json.
+ * Returns empty string on any failure.
+ */
+export function readGatewayToken(): string {
+  const raw = readOpenclawConfig() as Record<string, unknown>;
+  const gateway = raw?.gateway as Record<string, unknown> | undefined;
+  const auth = gateway?.auth as Record<string, unknown> | undefined;
+  return String(auth?.token ?? "");
+}
+
+/**
+ * Read the workspace root from ~/.openclaw/openclaw.json.
+ * Path: agents.defaults.workspace. Defaults to ~/.openclaw/workspace.
+ */
+export function readWorkspaceRoot(): string {
+  const raw = readOpenclawConfig() as Record<string, unknown>;
+  const agents = raw?.agents as Record<string, unknown> | undefined;
+  const defaults = agents?.defaults as Record<string, unknown> | undefined;
+  const workspace = defaults?.workspace;
+  if (typeof workspace === "string" && workspace) return workspace;
+  return join(homedir(), ".openclaw", "workspace");
 }

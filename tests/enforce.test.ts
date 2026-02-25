@@ -5,10 +5,20 @@ import type { SannaConfig, EnforceResponse } from "../src/types.js";
 const mockReadGatewayToken = vi.fn(() => "");
 vi.mock("../src/http.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/http.js")>();
-  return { ...actual, readGatewayToken: () => mockReadGatewayToken() };
+  return {
+    ...actual,
+    readGatewayToken: () => mockReadGatewayToken(),
+    readWorkspaceRoot: () => "/tmp/sanna-test-workspace",
+  };
 });
 
-import { enforce, forward, enforceAndForward } from "../src/enforce.js";
+// Mock directExecute so enforceAndExecute tests don't hit the filesystem
+const mockDirectExecute = vi.fn();
+vi.mock("../src/execute.js", () => ({
+  directExecute: (...args: unknown[]) => mockDirectExecute(...args),
+}));
+
+import { enforce, forward, enforceAndExecute } from "../src/enforce.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -128,7 +138,7 @@ describe("enforce", () => {
 });
 
 // ---------------------------------------------------------------------------
-// forward()
+// forward() — retained for future use
 // ---------------------------------------------------------------------------
 
 describe("forward", () => {
@@ -185,10 +195,10 @@ describe("forward", () => {
 });
 
 // ---------------------------------------------------------------------------
-// enforceAndForward()
+// enforceAndExecute()
 // ---------------------------------------------------------------------------
 
-describe("enforceAndForward", () => {
+describe("enforceAndExecute", () => {
   it("returns denial ToolResult when sidecar says deny", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({
@@ -198,7 +208,7 @@ describe("enforceAndForward", () => {
       })
     );
 
-    const result = await enforceAndForward(
+    const result = await enforceAndExecute(
       DEFAULT_CONFIG,
       "exec",
       { command: "rm -rf /" }
@@ -212,8 +222,8 @@ describe("enforceAndForward", () => {
     expect(text).toContain("Action blocked by constitution");
     expect(text).toContain("deny-hash-001");
 
-    // Should NOT have made a second fetch for forwarding
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Should NOT have called directExecute
+    expect(mockDirectExecute).not.toHaveBeenCalled();
   });
 
   it("returns escalation ToolResult when sidecar says escalate", async () => {
@@ -225,7 +235,7 @@ describe("enforceAndForward", () => {
       })
     );
 
-    const result = await enforceAndForward(
+    const result = await enforceAndExecute(
       DEFAULT_CONFIG,
       "message",
       { to: "user@example.com" },
@@ -240,29 +250,31 @@ describe("enforceAndForward", () => {
     expect(text).toContain("esc-hash-001");
     expect(text).toContain("user approval");
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mockDirectExecute).not.toHaveBeenCalled();
   });
 
-  it("forwards and returns result when sidecar says allow", async () => {
-    // First call: enforce → allow
+  it("executes directly and returns result when sidecar says allow", async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "allow", receipt_hash: "allow-hash-001" })
     );
-    // Second call: forward → gateway response
-    const gatewayResult = {
+
+    const execResult = {
       content: [{ type: "text", text: "file1.txt\nfile2.txt" }],
     };
-    fetchMock.mockResolvedValueOnce(jsonResponse(gatewayResult));
+    mockDirectExecute.mockReturnValueOnce(execResult);
 
-    const result = await enforceAndForward(
+    const result = await enforceAndExecute(
       DEFAULT_CONFIG,
       "exec",
       { command: "ls" }
     );
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    // Gateway result is returned with receipt hash attached
-    expect(result.content).toEqual(gatewayResult.content);
+    // Only one fetch (to sidecar), no second fetch to gateway
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // directExecute was called with the tool and args
+    expect(mockDirectExecute).toHaveBeenCalledWith("exec", { command: "ls" });
+    // Result includes receipt hash
+    expect(result.content).toEqual(execResult.content);
     expect((result as Record<string, unknown>)._sanna_receipt_hash).toBe(
       "allow-hash-001"
     );
@@ -277,7 +289,7 @@ describe("enforceAndForward", () => {
       })
     );
 
-    const result = await enforceAndForward(DEFAULT_CONFIG, "exec", {
+    const result = await enforceAndExecute(DEFAULT_CONFIG, "exec", {
       command: "rm -rf /",
     });
 
@@ -295,7 +307,7 @@ describe("enforceAndForward", () => {
       })
     );
 
-    const result = await enforceAndForward(DEFAULT_CONFIG, "message", {
+    const result = await enforceAndExecute(DEFAULT_CONFIG, "message", {
       to: "user@example.com",
     });
 
@@ -308,11 +320,11 @@ describe("enforceAndForward", () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse({ decision: "allow", receipt_hash: "h" })
     );
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({ content: [{ type: "text", text: "ok" }] })
-    );
+    mockDirectExecute.mockReturnValueOnce({
+      content: [{ type: "text", text: "ok" }],
+    });
 
-    await enforceAndForward(
+    await enforceAndExecute(
       DEFAULT_CONFIG,
       "exec",
       { command: "ls" },
