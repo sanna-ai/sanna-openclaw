@@ -1,15 +1,18 @@
 /**
- * Tool registration — wrapper tools that replace governed core tools.
+ * Tool registration — utility tools only.
  *
- * Each governed tool gets a sanna_* wrapper that enforces the constitution
- * before executing the tool directly in-process.
+ * The sanna_* wrapper architecture has been replaced by before_tool_call
+ * hook-based enforcement. Native tools execute normally in the agent loop;
+ * the hook evaluates governance before each call.
+ *
+ * This module is retained for potential utility tools (e.g. sanna_verify)
+ * and for the KNOWN_SCHEMAS export used in tests.
  */
 
 import type { SannaConfig, PluginAPI } from "./types.js";
-import { enforceAndExecute } from "./enforce.js";
 
 /** Composite tools that use an "action" parameter to select behavior. */
-const COMPOSITE_TOOLS = new Set([
+export const COMPOSITE_TOOLS = new Set([
   "browser",
   "message",
   "nodes",
@@ -20,9 +23,8 @@ const COMPOSITE_TOOLS = new Set([
 /**
  * Best-effort parameter hints for known tools. All schemas keep
  * additionalProperties: true so extra params always pass through.
- * These may drift from OpenClaw's actual schemas over time.
  */
-const KNOWN_SCHEMAS: Record<string, Record<string, unknown>> = {
+export const KNOWN_SCHEMAS: Record<string, Record<string, unknown>> = {
   exec: {
     type: "object",
     properties: {
@@ -84,50 +86,7 @@ const KNOWN_SCHEMAS: Record<string, Record<string, unknown>> = {
   },
 };
 
-/** Generic fallback schema for tools without known parameter hints. */
-const GENERIC_SCHEMA: Record<string, unknown> = { type: "object", additionalProperties: true };
-
-/** Register sanna_* wrapper tools for all governed tools. */
-export function registerTools(api: PluginAPI, config: SannaConfig): void {
-  const tools = config.governedTools ?? [];
-
-  for (const toolName of tools) {
-    const isComposite = COMPOSITE_TOOLS.has(toolName);
-
-    const description = isComposite
-      ? `Governed version of ${toolName}. Accepts the same parameters including "action". Enforces Sanna constitution before execution.`
-      : `Governed version of ${toolName}. Enforces Sanna constitution before execution. Use this instead of ${toolName}.`;
-
-    const parameters = KNOWN_SCHEMAS[toolName] ?? GENERIC_SCHEMA;
-
-    api.registerTool(
-      {
-        name: `sanna_${toolName}`,
-        description,
-        parameters,
-        execute: async (_id, params) => {
-          const action =
-            isComposite && typeof params.action === "string"
-              ? params.action
-              : undefined;
-
-          // Wire session context: use explicit sessionKey if present, else _id
-          const sessionKey =
-            typeof params.sessionKey === "string"
-              ? params.sessionKey
-              : undefined;
-
-          return enforceAndExecute(config, toolName, params, action, {
-            session: sessionKey || _id,
-          });
-        },
-      },
-      { optional: false }
-    );
-
-    api.logger.info(`[sanna] Registered governed tool: sanna_${toolName}`);
-  }
+/** No-op — wrapper tools are no longer registered. Hooks handle enforcement. */
+export function registerTools(_api: PluginAPI, _config: SannaConfig): void {
+  // Intentionally empty. Hook-based enforcement replaces wrapper tools.
 }
-
-/** Exported for testing. */
-export { KNOWN_SCHEMAS };

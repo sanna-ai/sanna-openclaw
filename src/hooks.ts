@@ -1,88 +1,181 @@
 /**
- * Plugin hooks: before_tool_call safety net + tool_result_persist receipts.
+ * Plugin hooks — primary enforcement point for Sanna governance.
  *
- * before_tool_call — defense in depth. Blocks direct calls to governed tools
- * when the LLM bypasses sanna_* wrappers. Should never fire if tools.allow
- * is configured correctly, but catches misconfiguration and prompt injection.
+ * before_tool_call — PRIMARY enforcement. Fires for every tool call in the
+ * agent loop. Calls sidecar /enforce and blocks (deny/escalate) or allows.
+ * Fail-closed: if sidecar is unreachable, the action is blocked.
  *
- * tool_result_persist — synchronous transform hook. Stamps receipt hashes
- * onto tool results before they're persisted to the session transcript.
+ * after_tool_call — observability. Logs receipt info after allowed calls.
+ *
+ * tool_result_persist — stamps receipt metadata onto results for transcript.
  */
 
 import type { SannaConfig, PluginAPI } from "./types.js";
+import { fetchWithTimeout } from "./http.js";
+
+const SIDECAR_TIMEOUT_MS = 5_000;
 
 export function registerHooks(api: PluginAPI, config: SannaConfig): void {
-  const governed = new Set(config.governedTools ?? []);
+  const sidecarPort = config.sidecarPort ?? 18890;
+  const enforceUrl = `http://127.0.0.1:${sidecarPort}/enforce`;
+  const isEnforceMode = config.enforcementMode === "enforce";
+
+  // Track last receipt per tool call for after_tool_call observability
+  let lastReceipt: { receiptId: string; tool: string; verdict: string } | null = null;
 
   // ---------------------------------------------------------------------------
-  // before_tool_call — safety net
+  // before_tool_call — primary enforcement
   // ---------------------------------------------------------------------------
   //
-  // VALIDATION REQUIRED: test against live OpenClaw Gateway
+  // Hook signature from OpenClaw source:
+  //   hookRunner.runBeforeToolCall(event, ctx)
+  //   event: { toolName: string, params: Record<string, unknown> }
+  //   ctx: { toolName: string, agentId?: string, sessionKey?: string }
   //
-  // The exact handler signature for before_tool_call is not fully documented.
-  // We use (toolName, params) based on "intercept tool params/results" from
-  // the Agent Loop docs. This may need adjustment once tested against a real
-  // OpenClaw instance. The try/catch and argument validation below ensure
-  // we fail loudly rather than silently if the signature changes.
+  // Return { block: true, blockReason: string } to block
+  // Return { blocked: false } to allow
+  // Return undefined/void to allow
 
   api.registerHook(
     "before_tool_call",
-    (...args: unknown[]) => {
-      try {
-        const toolName = args[0];
+    async (...args: unknown[]) => {
+      const event = args[0] as Record<string, unknown> | undefined;
+      const ctx = args[1] as Record<string, unknown> | undefined;
 
-        // Warn loudly on unexpected argument shape
-        if (typeof toolName !== "string") {
-          api.logger.warn(
-            "[sanna] before_tool_call received unexpected arguments. " +
-              "Hook signature may have changed. Args: " +
-              JSON.stringify(args.slice(0, 2))
-          );
-          return;
-        }
+      // Extract tool name and params from event
+      const toolName = event?.toolName as string | undefined;
+      const params = (event?.params ?? {}) as Record<string, unknown>;
 
-        // Only intercept governed originals, not sanna_* wrappers
-        if (!governed.has(toolName) || toolName.startsWith("sanna_")) return;
-
+      if (!toolName || typeof toolName !== "string") {
         api.logger.warn(
-          `[sanna] BLOCKED direct call to governed tool: ${toolName}. Use sanna_${toolName} instead.`
+          "[sanna] before_tool_call: could not extract toolName from event. " +
+            "Args: " + JSON.stringify(args.slice(0, 2))
+        );
+        // Fail closed in enforce mode
+        if (isEnforceMode) {
+          return {
+            block: true,
+            blockReason: "Governance enforcement error — could not identify tool",
+          };
+        }
+        return undefined;
+      }
+
+      // Call sidecar /enforce
+      try {
+        const res = await fetchWithTimeout(
+          enforceUrl,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tool: toolName,
+              args: params,
+              context: {
+                agent_id: (ctx?.agentId as string) ?? "",
+                session_id: (ctx?.sessionKey as string) ?? "",
+              },
+            }),
+          },
+          SIDECAR_TIMEOUT_MS
         );
 
-        if (config.enforcementMode === "enforce") {
-          throw new Error(
-            `[sanna] Tool "${toolName}" requires governance. Use "sanna_${toolName}" instead.`
+        if (!res.ok) {
+          api.logger.error(
+            `[sanna] Sidecar returned HTTP ${res.status} for ${toolName}`
           );
+          if (isEnforceMode) {
+            return {
+              block: true,
+              blockReason:
+                "Governance enforcement unavailable — action blocked",
+            };
+          }
+          return undefined;
         }
 
-        // In audit/passthrough mode, log only — let the call through
-      } catch (err) {
-        // Re-throw sanna enforcement errors — they intentionally block tool calls
-        if (err instanceof Error && err.message.includes("[sanna]")) {
-          throw err;
+        const body = (await res.json()) as Record<string, unknown>;
+        const verdict = (body.verdict as string) ?? "halt";
+        const reason = (body.reason as string) ?? "No reason provided";
+        const receipt = body.receipt as Record<string, unknown> | undefined;
+        const receiptId = (receipt?.receipt_id as string) ?? "";
+
+        // Store for after_tool_call observability
+        lastReceipt = { receiptId, tool: toolName, verdict };
+
+        if (verdict === "allow") {
+          api.logger.info(
+            `[sanna] ALLOW ${toolName} (receipt: ${receiptId.slice(0, 8)}...)`
+          );
+          return { blocked: false };
         }
-        // Unexpected errors: log but don't crash the hook
+
+        if (verdict === "escalate") {
+          const msg =
+            `Requires approval: ${reason} (receipt: ${receiptId})`;
+          api.logger.warn(`[sanna] ESCALATE ${toolName}: ${reason}`);
+          if (isEnforceMode) {
+            return { block: true, blockReason: msg };
+          }
+          // Audit mode: log but allow
+          return undefined;
+        }
+
+        // halt / deny / error / anything else → block
+        const msg =
+          `Blocked by governance: ${reason} (receipt: ${receiptId})`;
+        api.logger.warn(`[sanna] DENY ${toolName}: ${reason}`);
+        if (isEnforceMode) {
+          return { block: true, blockReason: msg };
+        }
+        // Audit mode: log but allow
+        return undefined;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
         api.logger.error(
-          `[sanna] before_tool_call handler error: ${err instanceof Error ? err.message : String(err)}`
+          `[sanna] Sidecar unreachable for ${toolName}: ${msg}`
         );
+        // FAIL CLOSED
+        if (isEnforceMode) {
+          return {
+            block: true,
+            blockReason:
+              "Governance enforcement unavailable — action blocked",
+          };
+        }
+        return undefined;
       }
     },
     {
       name: "sanna.before-tool-call",
       description:
-        "Sanna governance safety net — blocks direct calls to governed tools",
+        "Sanna governance enforcement — evaluates every tool call against the constitution",
     }
   );
 
   // ---------------------------------------------------------------------------
-  // tool_result_persist — receipt annotation
+  // after_tool_call — observability
   // ---------------------------------------------------------------------------
-  //
-  // This hook is synchronous (docs are explicit). It annotates results from
-  // sanna_* wrappers with the receipt hash so it appears in the transcript.
-  //
-  // NOTE: The result object shape depends on what OpenClaw passes here.
-  // We look for _sanna_receipt_hash set by enforceAndForward().
+
+  api.registerHook(
+    "after_tool_call",
+    (...args: unknown[]) => {
+      if (lastReceipt) {
+        api.logger.info(
+          `[sanna] after_tool_call: ${lastReceipt.tool} verdict=${lastReceipt.verdict} receipt=${lastReceipt.receiptId.slice(0, 8)}...`
+        );
+        lastReceipt = null;
+      }
+    },
+    {
+      name: "sanna.after-tool-call",
+      description: "Sanna governance observability — logs receipt info",
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // tool_result_persist — receipt annotation (simplified)
+  // ---------------------------------------------------------------------------
 
   api.registerHook(
     "tool_result_persist",
