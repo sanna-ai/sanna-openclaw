@@ -46,19 +46,25 @@ See [docs/SETUP.md](docs/SETUP.md) for detailed installation steps.
 
 ## Governed Tools
 
-The plugin replaces core OpenClaw tools with governance-aware wrappers. The agent calls the wrapper; the wrapper enforces the constitution before forwarding.
+The plugin replaces core OpenClaw tools with governance-aware `sanna_*` wrappers. The agent sees only the wrappers (via `tools.allow`); each wrapper enforces the constitution before forwarding execution through the gateway.
 
-| Core Tool | Wrapper | Purpose |
-|---|---|---|
-| `exec` | `sanna_exec` | Shell command execution |
-| `write` | `sanna_write` | File creation |
-| `edit` | `sanna_edit` | File modification |
-| `apply_patch` | `sanna_patch` | Patch application |
-| `browser_navigate` | `sanna_browse` | Browser navigation |
-| `browser_click` | `sanna_click` | Browser click actions |
-| `browser_type` | `sanna_type` | Browser text input |
-| `message` | `sanna_message` | External messaging |
-| `cron` | `sanna_cron` | Task scheduling |
+| Tier | Core Tool | Wrapper | Purpose |
+|---|---|---|---|
+| 1 | `exec` | `sanna_exec` | Shell command execution |
+| 1 | `bash` | `sanna_bash` | Shell (bash variant) |
+| 1 | `write` | `sanna_write` | File creation |
+| 1 | `edit` | `sanna_edit` | File modification |
+| 1 | `apply_patch` | `sanna_apply_patch` | Patch application |
+| 1 | `process` | `sanna_process` | Process management |
+| 2 | `browser` | `sanna_browser` | Browser actions (composite) |
+| 2 | `message` | `sanna_message` | External messaging (composite) |
+| 2 | `nodes` | `sanna_nodes` | Node management (composite) |
+| 3 | `web_search` | `sanna_web_search` | Web search |
+| 3 | `web_fetch` | `sanna_web_fetch` | Web fetch |
+| 3 | `cron` | `sanna_cron` | Task scheduling (composite) |
+| 3 | `gateway` | `sanna_gateway` | Gateway calls (composite) |
+| 3 | `sessions_send` | `sanna_sessions_send` | Session messaging |
+| 3 | `sessions_spawn` | `sanna_sessions_spawn` | Session spawning |
 
 ## Three Enforcement Layers
 
@@ -68,47 +74,49 @@ The plugin replaces core OpenClaw tools with governance-aware wrappers. The agen
 
 3. **Audit receipts** — After every tool execution, the `tool_result_persist` hook generates a signed receipt via the sidecar. Every governed tool gets two receipts: one from enforcement, one from audit.
 
-## Agent Tools
-
-| Tool | Description |
-|---|---|
-| `sanna_check` | Dry-run a tool call against the constitution without executing it |
-| `sanna_status` | View loaded constitution, enforcement stats, sidecar version |
-
-## Slash Commands
+## CLI Commands
 
 | Command | Description |
 |---|---|
-| `/sanna` | Governance dashboard |
-| `/sanna receipts` | Browse audit receipts (supports `--tool`, `--verdict`, `--limit`) |
-| `/sanna constitution` | View active constitution and boundary counts |
+| `openclaw sanna status` | Sidecar health, constitution, enforcement stats |
+| `openclaw sanna audit` | Recent enforcement decisions (`--limit N`) |
+| `openclaw sanna verify <hash>` | Verify a receipt by hash |
 
 ## Constitution Templates
 
-Three templates in `constitutions/` for different use cases:
+Three starter templates in `constitutions/` for different use cases:
 
 | Template | Profile |
 |---|---|
-| `openclaw-personal.yaml` | Conservative — read-only autonomous, everything else escalates |
-| `openclaw-developer.yaml` | Developer — broad workspace access, restricted system ops |
-| `openclaw-team.yaml` | Team — shared agent with escalation workflows for deployment |
+| `personal.yaml` | Lenient — broad execution and browsing, messaging escalated |
+| `developer.yaml` | Balanced — full workspace access, communication escalated |
+| `team.yaml` | Strict — narrow execution, broad escalation requirements |
 
 See [docs/CONSTITUTION_GUIDE.md](docs/CONSTITUTION_GUIDE.md) for customization.
 
 ## Configuration
 
-In `openclaw.plugin.json`:
+In `openclaw.json`:
 
 ```json
 {
+  "tools": {
+    "allow": [
+      "sanna_exec", "sanna_bash", "sanna_write", "sanna_edit",
+      "sanna_apply_patch", "sanna_process", "sanna_browser",
+      "sanna_message", "sanna_nodes", "sanna_web_search",
+      "sanna_web_fetch", "sanna_cron", "sanna_gateway",
+      "sanna_sessions_send", "sanna_sessions_spawn",
+      "group:sessions", "group:memory", "image", "read",
+      "canvas", "agents_list", "session_status"
+    ]
+  },
   "plugin": "@sanna/openclaw",
   "config": {
     "constitutionPath": "./constitutions",
-    "sidecarHost": "127.0.0.1",
-    "sidecarPort": 18791,
-    "governedTools": ["exec", "write", "edit", "apply_patch",
-      "browser_navigate", "browser_click", "browser_type",
-      "message", "cron"]
+    "sidecarPort": 18890,
+    "gatewayPort": 18789,
+    "enforcementMode": "enforce"
   }
 }
 ```
@@ -118,15 +126,15 @@ In `openclaw.plugin.json`:
 - Node.js 22+
 - Python 3.10+
 - OpenClaw Gateway
-- `sanna` >= 0.13.4 (installed automatically by `openclaw sanna setup`)
+- `sanna` ~= 0.13.6 (installed automatically by `openclaw sanna setup`)
 
 ## Development
 
 ```bash
-# TypeScript tests
+# TypeScript tests (106 tests)
 npm test
 
-# Python sidecar tests
+# Python sidecar tests (24 tests)
 cd sidecar && python -m pytest tests/ -v
 
 # Type check
