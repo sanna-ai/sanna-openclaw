@@ -2,34 +2,31 @@
  * Constitution template validation.
  *
  * Validates that all YAML templates in constitutions/ are valid sanna
- * constitutions with the required fields. Uses Python + sanna library
- * for authoritative validation.
+ * constitutions with the required fields. Uses @sanna/core for
+ * authoritative validation.
  */
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { execSync } from "node:child_process";
 
 const CONSTITUTIONS_DIR = join(__dirname, "../constitutions");
-const PROJECT_ROOT = join(__dirname, "..");
 
 // Discover all YAML files in constitutions/
 const yamlFiles = readdirSync(CONSTITUTIONS_DIR)
   .filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"))
   .sort();
 
-// Check if sanna library is available for deep validation
-let sannaAvailable = false;
+// Check if @sanna/core is available for deep validation
+let sannaCore: typeof import("@sanna/core") | null = null;
 try {
-  execSync("python3 -c 'import sanna'", { stdio: "ignore" });
-  sannaAvailable = true;
+  sannaCore = await import("@sanna/core");
 } catch {
-  // sanna not installed
+  // @sanna/core not available
 }
 
 // ---------------------------------------------------------------------------
-// Basic YAML structure tests (no Python needed)
+// Basic YAML structure tests (no @sanna/core needed)
 // ---------------------------------------------------------------------------
 
 describe("constitution templates", () => {
@@ -77,38 +74,24 @@ describe("constitution templates", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Deep validation via sanna library (requires Python)
+// Deep validation via @sanna/core
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!sannaAvailable)("constitution templates: sanna validation", () => {
+describe.skipIf(!sannaCore)("constitution templates: sanna validation", () => {
   for (const file of yamlFiles) {
-    it(`${file} loads successfully with sanna library`, () => {
+    it(`${file} loads successfully with @sanna/core`, () => {
       const fullPath = join(CONSTITUTIONS_DIR, file);
-      const result = execSync(
-        `python3 -c "
-from sanna.constitution import load_constitution
-c = load_constitution('${fullPath}')
-print(f'{c.identity.agent_name}')
-"`,
-        { cwd: PROJECT_ROOT, encoding: "utf-8" }
-      );
-      expect(result.trim()).toBeTruthy();
+      const constitution = sannaCore!.loadConstitution(fullPath);
+      expect(constitution.identity.agent_name).toBeTruthy();
     });
 
     it(`${file} has valid authority_boundaries`, () => {
       const fullPath = join(CONSTITUTIONS_DIR, file);
-      const result = execSync(
-        `python3 -c "
-from sanna.constitution import load_constitution
-c = load_constitution('${fullPath}')
-ab = c.authority_boundaries
-assert len(ab.can_execute) > 0, 'can_execute must not be empty'
-assert len(ab.cannot_execute) > 0, 'cannot_execute must not be empty'
-print('ok')
-"`,
-        { cwd: PROJECT_ROOT, encoding: "utf-8" }
-      );
-      expect(result.trim()).toBe("ok");
+      const constitution = sannaCore!.loadConstitution(fullPath);
+      const ab = constitution.authority_boundaries;
+      expect(ab).toBeDefined();
+      expect(ab!.can_execute.length).toBeGreaterThan(0);
+      expect(ab!.cannot_execute.length).toBeGreaterThan(0);
     });
   }
 });

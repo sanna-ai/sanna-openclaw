@@ -1,166 +1,141 @@
 # Setup Guide
 
-Step-by-step installation and configuration for sanna-openclaw.
+Step-by-step installation and configuration for sanna.
 
 ## Prerequisites
 
 | Dependency | Version | Check |
 |---|---|---|
 | Node.js | 22+ | `node --version` |
-| Python | 3.10+ | `python3 --version` |
-| OpenClaw | Latest | `openclaw --version` |
+| OpenClaw | >= 2026.1.26 | `openclaw --version` |
 
-## 1. Install the Plugin
-
-```bash
-openclaw plugins install @sanna/openclaw
-```
-
-## 2. Configure Constitution Path
+## 1. Build and Pack
 
 ```bash
-openclaw config set plugins.entries.sanna.config.constitutionPath ~/.openclaw/sanna/constitution.yaml
+cd sanna-openclaw
+npm install
+npm run build
+npm pack
 ```
 
-Copy one of the included templates:
+This produces `sanna-0.1.0.tgz`.
+
+**Important:** Use `npm pack` + `openclaw plugins install <tgz>`, not `openclaw plugins install .`. The tgz respects the `files` field in package.json, excluding tests and source files. Direct install copies everything.
+
+## 2. Install the Plugin
 
 ```bash
-# Conservative — most actions require approval
-cp constitutions/openclaw-personal.yaml ~/.openclaw/sanna/constitution.yaml
-
-# Developer — broad workspace access
-cp constitutions/openclaw-developer.yaml ~/.openclaw/sanna/constitution.yaml
-
-# Team — shared agent with escalation workflows
-cp constitutions/openclaw-team.yaml ~/.openclaw/sanna/constitution.yaml
+openclaw plugins install sanna-0.1.0.tgz
 ```
 
-## 3. Configure tools.allow
+## 3. Enable Hooks
 
-This is the critical step. You must configure `tools.allow` in your OpenClaw
-agent config so the LLM sees ONLY `sanna_*` wrapper tools for governed tools,
-plus ungoverned tools directly.
-
-In your `openclaw.json` (or agent configuration):
+This is the critical step. Add `hooks.internal.enabled: true` to `~/.openclaw/openclaw.json`:
 
 ```json
 {
-  "tools": {
-    "allow": [
-      "sanna_exec", "sanna_bash", "sanna_write", "sanna_edit",
-      "sanna_apply_patch", "sanna_process", "sanna_browser",
-      "sanna_message", "sanna_nodes", "sanna_web_search",
-      "sanna_web_fetch", "sanna_cron", "sanna_gateway",
-      "sanna_sessions_send", "sanna_sessions_spawn",
-      "group:sessions", "group:memory", "image", "read",
-      "canvas", "agents_list", "session_status"
-    ]
+  "hooks": {
+    "internal": {
+      "enabled": true
+    }
   }
 }
 ```
 
-This shows:
-- `sanna_*` wrappers for all governed tools (tier 1 + 2 + 3)
-- Ungoverned tools directly (read, image, canvas, memory, sessions read-only, agents_list)
+Without this, the `before_tool_call` hook never fires and governance is silently bypassed. In enforce mode, the plugin throws on startup if this is not set.
 
-The LLM cannot call governed originals because they're not in the allow list.
-But `/tools/invoke` can still call them because `gateway.tools.deny` is separate
-from `tools.allow`.
+## 4. Constitution Setup
 
-**Do NOT add governed tools to `gateway.tools.deny`.** The sanna_* wrappers
-need to forward via `POST /tools/invoke`, which requires the original tools
-to be callable at the HTTP layer.
+The plugin auto-discovers constitutions from the `constitutions/` directory inside the plugin install. Discovery priority:
 
-## 4. Configure Enforcement Mode (Optional)
+1. `default.yaml` / `default.yml`
+2. `constitution.yaml` / `constitution.yml`
+3. `developer.yaml` / `developer.yml`
+4. First `.yaml` / `.yml` file alphabetically
 
-Three modes are available:
+To use a custom constitution, set `constitutionPath` in the plugin config:
+
+```bash
+openclaw config set plugins.entries.sanna.config.constitutionPath /path/to/my-constitution.yaml
+```
+
+Or copy one of the included templates:
+
+```bash
+# Developer — broad workspace access (default)
+# Personal — lenient, messaging escalated
+# Team — strict, broad escalation requirements
+```
+
+## 5. Configure Enforcement Mode (Optional)
 
 | Mode | Behavior |
 |---|---|
-| `enforce` (default) | Constitution is enforced. Denied actions are blocked. |
+| `enforce` (default) | Constitution is enforced. Denied actions are blocked. Fail-closed on errors. |
 | `audit` | Constitution is checked but not enforced. All actions proceed. Denials are logged. |
-| `passthrough` | No enforcement. Wrappers forward directly. |
+| `passthrough` | No enforcement. |
 
 ```bash
 openclaw config set plugins.entries.sanna.config.enforcementMode enforce
 ```
 
-## 5. Configure Gateway Token (Optional)
-
-If your Gateway requires authentication for `/tools/invoke`:
-
-```bash
-openclaw config set plugins.entries.sanna.config.gatewayToken YOUR_TOKEN
-```
-
 ## 6. Restart and Verify
 
 ```bash
-# Restart the gateway
 openclaw gateway restart
-
-# Check status
-openclaw sanna status
+openclaw sanna doctor
 ```
 
 You should see:
 
 ```
-Sidecar: healthy
-Mode: enforce
-Constitution: ~/.openclaw/sanna/constitution.yaml
-Governed tools: exec, bash, write, edit, apply_patch, process, browser, message, nodes, ...
+PASS  hooks.internal.enabled = true
+PASS  constitution: developer-agent (constitutions/developer.yaml)
+INFO  version: 0.1.0
+PASS  receipt store writable
+
+Governance is ready.
 ```
 
 ## Configuration Reference
 
-All fields in `openclaw.plugin.json` configSchema:
-
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `constitutionPath` | string | `""` | Path to YAML constitution file |
-| `gatewayPort` | number | `18789` | Gateway HTTP port for /tools/invoke |
-| `gatewayToken` | string | `""` | Bearer token for Gateway auth |
-| `sidecarPort` | number | `18890` | Python sidecar HTTP port |
-| `governedTools` | string[] | All tier 1+2+3 | Tool names to wrap with governance |
+| `constitutionPath` | string | `""` (auto-discover) | Path to YAML constitution file or directory |
+| `privateKeyPath` | string | `""` | Path to Ed25519 private key PEM for receipt signing |
+| `receiptStorePath` | string | `~/.sanna/receipts/openclaw.db` | Path to SQLite receipt store |
+| `governedTools` | string[] | All tier 1+2+3 | Tool names to govern |
 | `enforcementMode` | string | `"enforce"` | `enforce`, `audit`, or `passthrough` |
 
 ## Troubleshooting
 
-### Sidecar unreachable
+### Hooks not enabled
 
-The plugin is fail-closed: if the sidecar is unreachable, all governed tool calls
-are denied. Check:
+If `openclaw sanna doctor` shows `FAIL  hooks.internal.enabled is not set`:
 
-1. Is the sidecar running? Look for `[sanna] Sidecar started` in Gateway logs
-2. Can you reach it? `curl http://127.0.0.1:18890/health`
-3. Is Python available? The sidecar needs `python3` on PATH
+1. Open `~/.openclaw/openclaw.json`
+2. Add `"hooks": { "internal": { "enabled": true } }`
+3. Run `openclaw gateway restart`
 
-### Agent calling original tools directly
+In enforce mode, the plugin refuses to load without this setting.
 
-If the agent calls `exec` instead of `sanna_exec`:
+### Constitution not found
 
-1. Check `tools.allow` — governed originals should NOT be in the allow list
-2. Check that the SKILL.md is loaded by the agent
-3. The `before_tool_call` hook is a safety net but `tools.allow` is the primary control
+If the plugin fails with "No constitution found":
+
+1. Check that `constitutions/` exists in the plugin install directory (`~/.openclaw/extensions/sanna/constitutions/`)
+2. Or set an explicit path: `openclaw config set plugins.entries.sanna.config.constitutionPath /path/to/constitution.yaml`
+3. Validate with `openclaw sanna doctor`
+
+### Receipt store not writable
+
+The default receipt store is `~/.sanna/receipts/openclaw.db`. Ensure the directory exists and is writable:
+
+```bash
+mkdir -p ~/.sanna/receipts
+openclaw sanna doctor
+```
 
 ### Constitution parse errors
 
-Validate your constitution:
-
-```bash
-python3 -c "
-from sanna.constitution import load_constitution
-c = load_constitution('path/to/constitution.yaml')
-print(f'Loaded: {c.identity.agent_name}')
-print(f'Boundaries: {len(c.boundaries)}')
-"
-```
-
-### Port conflicts
-
-Default ports: sidecar on 18890, gateway on 18789. If either conflicts:
-
-```bash
-openclaw config set plugins.entries.sanna.config.sidecarPort 19000
-```
+If the constitution fails to load, use `openclaw sanna doctor` to see the error message. Check your YAML against the [Constitution Guide](CONSTITUTION_GUIDE.md).

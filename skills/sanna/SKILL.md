@@ -1,51 +1,36 @@
 ---
 name: sanna
-description: "Sanna governance — use sanna_* tools instead of direct tools"
+description: "Sanna governance — tool calls are governed transparently"
 ---
 
 # Sanna Governance
 
-This system has Sanna governance enabled. Tool calls are enforced against a
-constitution that defines what actions are allowed, denied, or require escalation.
+This system has Sanna governance enabled. A constitution defines what actions
+are allowed, denied, or require escalation. Governance is applied automatically
+to every tool call — no special tool names or prefixes are needed.
 
-## Important: Use sanna_* tools
+## How It Works
 
-Instead of calling tools directly, use the governed versions:
+Call tools normally. The governance layer intercepts each call and evaluates it
+against the constitution before execution. There are three possible outcomes:
 
-| Instead of | Use |
-|-----------|-----|
-| exec | sanna_exec |
-| bash | sanna_bash |
-| write | sanna_write |
-| edit | sanna_edit |
-| apply_patch | sanna_apply_patch |
-| process | sanna_process |
-| browser | sanna_browser |
-| message | sanna_message |
-| nodes | sanna_nodes |
-| web_search | sanna_web_search |
-| web_fetch | sanna_web_fetch |
-| cron | sanna_cron |
-| gateway | sanna_gateway |
-| sessions_send | sanna_sessions_send |
-| sessions_spawn | sanna_sessions_spawn |
+- **Allowed** — the tool executes normally
+- **Blocked** — the tool is denied with an explanation of which rule was violated
+- **Escalated** — the tool requires human approval before it can proceed
 
-The sanna_* tools accept the SAME parameters as the originals. Just use
-the sanna_ prefix. The tool will check the constitution and either:
-- Execute the action (allowed)
-- Deny the action with an explanation
-- Request escalation (ask the user)
+## Governed Tool Tiers
 
-## Composite tools
+| Tier | Tools | Risk Level |
+|---|---|---|
+| 1 | exec, bash, write, edit, apply_patch, process | Modifies system state |
+| 2 | browser, message, nodes | Composite tools with high-risk actions |
+| 3 | web_search, web_fetch, cron, gateway, sessions_send, sessions_spawn | Audit trail |
 
-For tools like browser and message that use an "action" parameter,
-pass the action as normal:
-
-Example: sanna_browser with action "navigate"
-Example: sanna_message with action "send"
-Example: sanna_cron with action "create"
+Tier 4 tools (read, image, canvas, sessions_list, sessions_history,
+session_status, memory_search, memory_get, agents_list) are not governed.
 
 ## Receipts
 
 Every governed action generates a cryptographic receipt that proves governance
-was applied. Receipts are attached to tool results automatically.
+was applied. Receipts are generated and persisted automatically — no action
+is needed from the agent.

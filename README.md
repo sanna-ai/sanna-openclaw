@@ -4,28 +4,28 @@ Constitution enforcement and cryptographic receipts for OpenClaw agents.
 
 ## What It Does
 
-sanna is an OpenClaw Gateway plugin that enforces governance constitutions on AI agent tool execution. Every tool call in the agent loop passes through a `before_tool_call` hook that evaluates the action against a YAML constitution via a Python sidecar. Actions are allowed, blocked, or escalated for human approval — and every decision gets an Ed25519-signed cryptographic receipt persisted to disk before the response is returned.
+sanna is an OpenClaw Gateway plugin that enforces governance constitutions on AI agent tool execution. Every tool call in the agent loop passes through a `before_tool_call` hook that evaluates the action against a YAML constitution via `@sanna/core` — in-process, with zero external dependencies. Actions are allowed, blocked, or escalated for human approval, and every decision gets an Ed25519-signed cryptographic receipt persisted before the response is returned.
 
 ## Architecture
 
 ```
-  Agent Loop                 OpenClaw Gateway              Python Sidecar
- ┌──────────┐              ┌───────────────────┐         ┌──────────────────┐
- │           │─ tool call ─>│  before_tool_call │─ HTTP ─>│  FastAPI server  │
- │           │              │  hook (sanna)     │         │  (localhost only) │
- │           │              │                   │         │                  │
- │           │              │  POST /enforce    │────────>│  sanna library   │
- │           │              │  allow/halt?      │<────────│  - evaluate()    │
- │           │              │  block or allow   │         │  - Ed25519 sign  │
- │           │<─ result ────│                   │         │  - write-ahead   │
- └──────────┘              │  after_tool_call  │         │    receipts      │
-                           │  (observability)  │         └──────────────────┘
-                           └───────────────────┘
+  Agent Loop                 OpenClaw Gateway
+ ┌──────────┐              ┌─────────────────────────────────────┐
+ │           │─ tool call ─>│  before_tool_call hook (sanna)      │
+ │           │              │                                     │
+ │           │              │  1. evaluateAuthority(tool, params)  │
+ │           │              │     via @sanna/core (in-process)     │
+ │           │              │  2. generateReceipt() + signReceipt()│
+ │           │              │  3. ReceiptStore.save() (write-ahead)│
+ │           │              │  4. Return allow / block to Gateway  │
+ │           │<─ result ────│                                     │
+ └──────────┘              │  after_tool_call (observability)     │
+                           └─────────────────────────────────────┘
 ```
 
-The `before_tool_call` hook is the primary enforcement point. It fires for every tool call in the agent loop, calls the sidecar `/enforce` endpoint, and returns `{ block: true }` or `{ blocked: false }`. No wrapper tools, no tool renaming — native tools execute normally and the hook gates them transparently.
+The `before_tool_call` hook is the primary enforcement point. It fires for every tool call in the agent loop, evaluates authority via `@sanna/core`, and returns `{ block: true }` or `{ blocked: false }`. No wrapper tools, no tool renaming — native tools execute normally and the hook gates them transparently.
 
-**Fail-closed**: if the sidecar is unreachable or returns an error, the action is blocked in enforce mode. In audit mode, decisions are logged but execution is not blocked.
+**Fail-closed**: if evaluation throws or receipt persistence fails, the action is blocked in enforce mode. In audit mode, decisions are logged but execution is not blocked.
 
 ## Quick Start
 
@@ -47,7 +47,7 @@ openclaw gateway restart
 openclaw sanna doctor
 ```
 
-The sidecar auto-discovers constitution files from `constitutions/` — no manual path configuration needed.
+Constitution files are auto-discovered from `constitutions/` — no manual path configuration needed.
 
 See [docs/SETUP.md](docs/SETUP.md) for detailed installation steps.
 
@@ -67,7 +67,7 @@ Tier 4 tools (`read`, `image`, `canvas`, `sessions_list`, `sessions_history`, `s
 
 | Mode | Behavior |
 |---|---|
-| `enforce` | Block on deny/escalate, fail-closed on sidecar errors |
+| `enforce` | Block on deny/escalate, fail-closed on errors |
 | `audit` | Log decisions but never block — for monitoring and tuning |
 | `passthrough` | No enforcement |
 
@@ -75,10 +75,10 @@ Tier 4 tools (`read`, `image`, `canvas`, `sessions_list`, `sessions_history`, `s
 
 | Command | Description |
 |---|---|
-| `openclaw sanna doctor` | Check governance readiness (hooks, sidecar, constitution) |
-| `openclaw sanna status` | Sidecar health, constitution, enforcement stats |
+| `openclaw sanna doctor` | Check governance readiness (hooks, constitution, receipt store) |
+| `openclaw sanna status` | Constitution info, enforcement stats |
 | `openclaw sanna audit` | Recent enforcement decisions (`--limit N`) |
-| `openclaw sanna verify <hash>` | Verify a receipt by hash |
+| `openclaw sanna verify <id>` | Look up a receipt by ID |
 
 ## Constitution Templates
 
@@ -101,7 +101,6 @@ In `openclaw.json`, the plugin reads its config from the plugin block:
   "plugins": {
     "sanna": {
       "constitutionPath": "./constitutions",
-      "sidecarPort": 18890,
       "enforcementMode": "enforce"
     }
   },
@@ -118,18 +117,13 @@ In `openclaw.json`, the plugin reads its config from the plugin block:
 ## Requirements
 
 - Node.js 22+
-- Python 3.10+
 - OpenClaw Gateway >= 2026.1.26
-- `sanna` ~= 0.13.6
 
 ## Development
 
 ```bash
-# TypeScript tests (98 tests)
+# TypeScript tests (82 tests)
 npm test
-
-# Python sidecar tests (29 tests)
-cd sidecar && python -m pytest tests/ -v
 
 # Type check
 npm run lint

@@ -4,7 +4,7 @@ How to write and customize Sanna constitutions for OpenClaw.
 
 ## Overview
 
-A constitution is a YAML file that defines what an agent can and cannot do. The sanna library loads the constitution, and the sidecar evaluates every tool call against it. Verdicts are `allow`, `halt`, or `escalate`.
+A constitution is a YAML file that defines what an agent can and cannot do. `@sanna/core` evaluates every tool call against it via the `before_tool_call` hook. Verdicts are `allow`, `halt`, or `escalate`.
 
 ## YAML Schema
 
@@ -310,43 +310,25 @@ must_escalate:
 
 ## Testing Your Constitution
 
-### Validate the YAML
+### Validate the constitution
+
+Use `openclaw sanna doctor` to verify the constitution loads correctly:
 
 ```bash
-python3 -c "
-from sanna.constitution import load_constitution
-c = load_constitution('constitutions/active.yaml')
-print(f'Loaded: {c.identity.agent_name}')
-print(f'Domain: {c.identity.domain}')
-print(f'Boundaries: {len(c.boundaries)}')
-print(f'Halt conditions: {len(c.halt_conditions)}')
-print(f'Invariants: {len(c.invariants)}')
-ab = c.authority_boundaries
-if ab:
-    print(f'can_execute: {len(ab.can_execute)}')
-    print(f'must_escalate: {len(ab.must_escalate)}')
-    print(f'cannot_execute: {len(ab.cannot_execute)}')
-"
+openclaw sanna doctor
 ```
 
-### Test rules with sanna_check
-
-Once the plugin is running, use `sanna_check` to dry-run tool calls against the constitution without executing them:
-
-```
-Agent, use sanna_check to verify whether exec with command "rm -rf /tmp/data" would be allowed.
-```
-
-The agent will call `sanna_check` with `tool: "exec"` and `args: { command: "rm -rf /tmp/data" }`, and report the verdict without running the command.
+This checks that the constitution parses without error, hooks are enabled, and the receipt store is writable.
 
 ### View enforcement activity
 
-Use the `/sanna` dashboard to see enforcement statistics, and `/sanna receipts` to browse individual receipts:
+Use `openclaw sanna audit` to see recent enforcement decisions:
 
+```bash
+openclaw sanna audit --limit 10
 ```
-/sanna
-/sanna receipts --tool exec --verdict halt --limit 10
-```
+
+Use `openclaw sanna status` for an overview of enforcement statistics.
 
 ## Template Customization Walkthrough
 
@@ -416,12 +398,9 @@ halt_conditions:
 ### Step 6: Validate and deploy
 
 ```bash
+# Restart the Gateway to pick up the new constitution
+openclaw gateway restart
+
 # Validate
-python3 -c "from sanna.constitution import load_constitution; c = load_constitution('constitutions/active.yaml'); print(f'OK: {c.identity.agent_name}')"
-
-# Restart the Gateway
-openclaw restart
-
-# Verify
-/sanna
+openclaw sanna doctor
 ```
