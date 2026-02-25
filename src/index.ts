@@ -22,7 +22,16 @@ import { registerHooks } from "./hooks.js";
 import { registerGatewayMethods } from "./gateway.js";
 import { registerCli } from "./cli.js";
 
-const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// import.meta.url is undefined when OpenClaw loads the plugin via jiti,
+// so fall back to __dirname (injected by CJS/jiti) or process.cwd().
+const PLUGIN_ROOT = resolve(
+  import.meta.url
+    ? dirname(fileURLToPath(import.meta.url))
+    : typeof __dirname !== "undefined"
+      ? __dirname
+      : process.cwd(),
+  ".."
+);
 
 /**
  * Resolve constitution path. Priority:
