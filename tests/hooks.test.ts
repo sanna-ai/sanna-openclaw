@@ -18,7 +18,8 @@ function createMockApi(): MockAPI {
     _hooks: hooks,
     registerTool: vi.fn(),
     registerService: vi.fn(),
-    registerHook(event: string, handler: HookHandler) {
+    registerHook: vi.fn(),
+    on(event: string, handler: HookHandler) {
       hooks.set(event, handler);
     },
     registerGatewayMethod: vi.fn(),

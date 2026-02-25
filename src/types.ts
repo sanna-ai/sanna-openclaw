@@ -76,6 +76,11 @@ export interface PluginAPI {
     handler: (...args: unknown[]) => unknown,
     opts?: { name?: string; description?: string }
   ): void;
+  on(
+    hookName: string,
+    handler: (...args: unknown[]) => unknown,
+    opts?: { name?: string; description?: string; priority?: number }
+  ): void;
   registerGatewayMethod(
     name: string,
     handler: (ctx: {

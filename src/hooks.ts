@@ -36,7 +36,7 @@ export function registerHooks(api: PluginAPI, config: SannaConfig): void {
   // Return { blocked: false } to allow
   // Return undefined/void to allow
 
-  api.registerHook(
+  api.on(
     "before_tool_call",
     async (...args: unknown[]) => {
       const event = args[0] as Record<string, unknown> | undefined;
@@ -157,7 +157,7 @@ export function registerHooks(api: PluginAPI, config: SannaConfig): void {
   // after_tool_call — observability
   // ---------------------------------------------------------------------------
 
-  api.registerHook(
+  api.on(
     "after_tool_call",
     (...args: unknown[]) => {
       if (lastReceipt) {
@@ -177,7 +177,7 @@ export function registerHooks(api: PluginAPI, config: SannaConfig): void {
   // tool_result_persist — receipt annotation (simplified)
   // ---------------------------------------------------------------------------
 
-  api.registerHook(
+  api.on(
     "tool_result_persist",
     (result: unknown) => {
       if (result == null || typeof result !== "object") return undefined;
