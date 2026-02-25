@@ -18,3 +18,4 @@ coverage/
 *.db
 *.db-journal
 CLAUDE.md
+*.tgz

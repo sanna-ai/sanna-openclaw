@@ -10,6 +10,7 @@
   },
   "files": [
     "dist/**/*",
+    "sidecar/**/*",
     "constitutions/**/*",
     "openclaw.plugin.json",
     "README.md",
