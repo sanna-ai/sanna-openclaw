@@ -43,6 +43,6 @@
     "vitest": "^2.1.9"
   },
   "dependencies": {
-    "@sanna-ai/core": "file:../sanna-ts/packages/core"
+    "@sanna-ai/core": "^0.1.0"
   }
 }
