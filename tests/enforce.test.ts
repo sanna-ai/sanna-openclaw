@@ -95,6 +95,28 @@ describe("enforce", () => {
     expect(result.decision).toBe("deny");
     expect(result.reason).toContain("HTTP 500");
   });
+
+  it("includes session in request when provided", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ decision: "allow" })
+    );
+
+    await enforce(DEFAULT_CONFIG, "exec", { command: "ls" }, undefined, "session-abc");
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.session).toBe("session-abc");
+  });
+
+  it("omits session from request when not provided", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ decision: "allow" })
+    );
+
+    await enforce(DEFAULT_CONFIG, "exec", { command: "ls" });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.session).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -272,5 +294,25 @@ describe("enforceAndForward", () => {
     expect(
       (result as Record<string, unknown>)._sanna_receipt_hash
     ).toBe("esc-receipt-001");
+  });
+
+  it("passes session context through to sidecar request", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ decision: "allow", receipt_hash: "h" })
+    );
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ content: [{ type: "text", text: "ok" }] })
+    );
+
+    await enforceAndForward(
+      DEFAULT_CONFIG,
+      "exec",
+      { command: "ls" },
+      undefined,
+      { session: "sess-123" }
+    );
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.session).toBe("sess-123");
   });
 });

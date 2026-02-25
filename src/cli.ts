@@ -6,6 +6,7 @@
  */
 
 import type { SannaConfig, PluginAPI } from "./types.js";
+import { fetchWithTimeout } from "./http.js";
 
 const SIDECAR_TIMEOUT_MS = 5_000;
 
@@ -29,7 +30,11 @@ export function registerCli(api: PluginAPI, config: SannaConfig): void {
       // openclaw sanna status
       addCommand(sanna, "status", "Show governance status", async () => {
         try {
-          const healthRes = await fetchWithTimeout(`${baseUrl}/health`);
+          const healthRes = await fetchWithTimeout(
+            `${baseUrl}/health`,
+            {},
+            SIDECAR_TIMEOUT_MS
+          );
           const healthy = healthRes.ok;
 
           if (!healthy) {
@@ -38,7 +43,11 @@ export function registerCli(api: PluginAPI, config: SannaConfig): void {
             return;
           }
 
-          const statusRes = await fetchWithTimeout(`${baseUrl}/status`);
+          const statusRes = await fetchWithTimeout(
+            `${baseUrl}/status`,
+            {},
+            SIDECAR_TIMEOUT_MS
+          );
           if (statusRes.ok) {
             const status = (await statusRes.json()) as Record<string, unknown>;
             console.log("Sidecar: healthy");
@@ -66,7 +75,7 @@ export function registerCli(api: PluginAPI, config: SannaConfig): void {
         }
       });
 
-      // openclaw sanna audit
+      // openclaw sanna audit (POST /audit)
       addCommandWithOptions(
         sanna,
         "audit",
@@ -74,9 +83,15 @@ export function registerCli(api: PluginAPI, config: SannaConfig): void {
         { "--limit <n>": "Number of recent decisions" },
         async (opts: Record<string, string>) => {
           try {
-            const limit = opts.limit ?? "20";
+            const limit = parseInt(opts.limit ?? "20", 10);
             const res = await fetchWithTimeout(
-              `${baseUrl}/audit?limit=${limit}`
+              `${baseUrl}/audit`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ limit }),
+              },
+              SIDECAR_TIMEOUT_MS
             );
             if (!res.ok) {
               console.error(`Sidecar returned HTTP ${res.status}`);
@@ -104,7 +119,11 @@ export function registerCli(api: PluginAPI, config: SannaConfig): void {
         "<receipt-hash>",
         async (hash: string) => {
           try {
-            const res = await fetchWithTimeout(`${baseUrl}/verify/${hash}`);
+            const res = await fetchWithTimeout(
+              `${baseUrl}/verify/${hash}`,
+              {},
+              SIDECAR_TIMEOUT_MS
+            );
             if (!res.ok) {
               console.error(`Verification failed: HTTP ${res.status}`);
               return;
@@ -171,17 +190,4 @@ function addCommandWithArg(
     .description(desc)
     .argument(arg)
     .action(fn as (...args: unknown[]) => Promise<void>);
-}
-
-// ---------------------------------------------------------------------------
-// Fetch with timeout
-// ---------------------------------------------------------------------------
-
-function fetchWithTimeout(url: string): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SIDECAR_TIMEOUT_MS);
-
-  return fetch(url, { signal: controller.signal }).finally(() =>
-    clearTimeout(timer)
-  );
 }

@@ -147,4 +147,22 @@ describe("sanna.audit", () => {
       error: "Sidecar unreachable",
     }));
   });
+
+  it("uses POST method for audit call", async () => {
+    const api = createMockApi();
+    registerGatewayMethods(api, DEFAULT_CONFIG);
+
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+
+    const respond = vi.fn();
+    await api._methods.get("sanna.audit")!({ respond });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://127.0.0.1:18890/audit");
+    expect(init.method).toBe("POST");
+    expect(init.headers["Content-Type"]).toBe("application/json");
+    const body = JSON.parse(init.body as string);
+    expect(body.limit).toBe(20);
+  });
 });

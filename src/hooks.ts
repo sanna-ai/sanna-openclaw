@@ -18,30 +18,54 @@ export function registerHooks(api: PluginAPI, config: SannaConfig): void {
   // before_tool_call — safety net
   // ---------------------------------------------------------------------------
   //
-  // NOTE: The exact handler signature for before_tool_call is not fully
-  // documented. We use (toolName, params) based on "intercept tool
-  // params/results" from the Agent Loop docs. This may need adjustment
-  // once tested against a real OpenClaw instance.
+  // VALIDATION REQUIRED: test against live OpenClaw Gateway
+  //
+  // The exact handler signature for before_tool_call is not fully documented.
+  // We use (toolName, params) based on "intercept tool params/results" from
+  // the Agent Loop docs. This may need adjustment once tested against a real
+  // OpenClaw instance. The try/catch and argument validation below ensure
+  // we fail loudly rather than silently if the signature changes.
 
   api.registerHook(
     "before_tool_call",
-    (toolName: unknown, _params: unknown) => {
-      if (typeof toolName !== "string") return;
+    (...args: unknown[]) => {
+      try {
+        const toolName = args[0];
 
-      // Only intercept governed originals, not sanna_* wrappers
-      if (!governed.has(toolName) || toolName.startsWith("sanna_")) return;
+        // Warn loudly on unexpected argument shape
+        if (typeof toolName !== "string") {
+          api.logger.warn(
+            "[sanna] before_tool_call received unexpected arguments. " +
+              "Hook signature may have changed. Args: " +
+              JSON.stringify(args.slice(0, 2))
+          );
+          return;
+        }
 
-      api.logger.warn(
-        `[sanna] BLOCKED direct call to governed tool: ${toolName}. Use sanna_${toolName} instead.`
-      );
+        // Only intercept governed originals, not sanna_* wrappers
+        if (!governed.has(toolName) || toolName.startsWith("sanna_")) return;
 
-      if (config.enforcementMode === "enforce") {
-        throw new Error(
-          `[sanna] Tool "${toolName}" requires governance. Use "sanna_${toolName}" instead.`
+        api.logger.warn(
+          `[sanna] BLOCKED direct call to governed tool: ${toolName}. Use sanna_${toolName} instead.`
+        );
+
+        if (config.enforcementMode === "enforce") {
+          throw new Error(
+            `[sanna] Tool "${toolName}" requires governance. Use "sanna_${toolName}" instead.`
+          );
+        }
+
+        // In audit/passthrough mode, log only — let the call through
+      } catch (err) {
+        // Re-throw sanna enforcement errors — they intentionally block tool calls
+        if (err instanceof Error && err.message.includes("[sanna]")) {
+          throw err;
+        }
+        // Unexpected errors: log but don't crash the hook
+        api.logger.error(
+          `[sanna] before_tool_call handler error: ${err instanceof Error ? err.message : String(err)}`
         );
       }
-
-      // In audit/passthrough mode, log only — let the call through
     },
     {
       name: "sanna.before-tool-call",

@@ -103,6 +103,36 @@ describe("before_tool_call", () => {
     expect(() => hook(42, {})).not.toThrow();
     expect(() => hook(undefined, {})).not.toThrow();
   });
+
+  it("logs warning when first arg is not a string", () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG);
+
+    const hook = api._hooks.get("before_tool_call")!;
+    hook(42, { some: "params" });
+
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("before_tool_call received unexpected arguments")
+    );
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Hook signature may have changed")
+    );
+  });
+
+  it("logs warning when called with single object arg (possible { tool, params } shape)", () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG);
+
+    const hook = api._hooks.get("before_tool_call")!;
+    hook({ tool: "exec", params: { command: "ls" } });
+
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("before_tool_call received unexpected arguments")
+    );
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Args:")
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

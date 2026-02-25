@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { PluginAPI, SannaConfig, ToolDefinition } from "../src/types.js";
-import { registerTools } from "../src/tools.js";
+import { registerTools, KNOWN_SCHEMAS } from "../src/tools.js";
 import { GOVERNED_TOOLS_DEFAULT } from "../src/config.js";
 
 // ---------------------------------------------------------------------------
@@ -89,11 +89,50 @@ describe("registerTools", () => {
     registerTools(api, DEFAULT_CONFIG);
 
     for (const entry of api._tools) {
-      expect(entry.def.parameters).toEqual({
-        type: "object",
-        additionalProperties: true,
-      });
+      const params = entry.def.parameters as Record<string, unknown>;
+      expect(params.additionalProperties).toBe(true);
     }
+  });
+
+  it("uses richer schemas for known tools", () => {
+    const api = createMockApi();
+    registerTools(api, {
+      ...DEFAULT_CONFIG,
+      governedTools: ["exec", "write", "browser"],
+    });
+
+    const exec = api._tools.find((t) => t.def.name === "sanna_exec")!;
+    const execParams = exec.def.parameters as Record<string, unknown>;
+    expect(execParams.required).toEqual(["command"]);
+    expect(execParams.properties).toBeDefined();
+
+    const write = api._tools.find((t) => t.def.name === "sanna_write")!;
+    const writeParams = write.def.parameters as Record<string, unknown>;
+    expect(writeParams.required).toEqual(["path", "content"]);
+
+    const browser = api._tools.find((t) => t.def.name === "sanna_browser")!;
+    const browserParams = browser.def.parameters as Record<string, unknown>;
+    expect(browserParams.required).toEqual(["action"]);
+  });
+
+  it("uses generic schema for unknown tools", () => {
+    const api = createMockApi();
+    registerTools(api, {
+      ...DEFAULT_CONFIG,
+      governedTools: ["sessions_send"],
+    });
+
+    const tool = api._tools[0];
+    expect(tool.def.parameters).toEqual({
+      type: "object",
+      additionalProperties: true,
+    });
+  });
+
+  it("KNOWN_SCHEMAS covers exec, write, edit, browser, message", () => {
+    expect(Object.keys(KNOWN_SCHEMAS)).toEqual(
+      expect.arrayContaining(["exec", "write", "edit", "browser", "message"])
+    );
   });
 
   it("registers only tools from custom governedTools list", () => {
@@ -149,7 +188,8 @@ describe("composite tool wrapper", () => {
       expect.objectContaining({ governedTools: ["browser"] }),
       "browser",
       { action: "navigate", url: "https://example.com" },
-      "navigate"
+      "navigate",
+      { session: "call-1" }
     );
   });
 
@@ -171,7 +211,8 @@ describe("composite tool wrapper", () => {
       expect.objectContaining({ governedTools: ["exec"] }),
       "exec",
       { command: "ls" },
-      undefined
+      undefined,
+      { session: "call-1" }
     );
   });
 });
@@ -203,8 +244,61 @@ describe("simple tool wrapper", () => {
       expect.objectContaining({ governedTools: ["write"] }),
       "write",
       { path: "/tmp/test.txt", content: "hello" },
-      undefined
+      undefined,
+      { session: "call-1" }
     );
     expect(result).toEqual(writeResult);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Session context
+// ---------------------------------------------------------------------------
+
+describe("session context", () => {
+  it("passes _id as session when no sessionKey in params", async () => {
+    const api = createMockApi();
+    registerTools(api, {
+      ...DEFAULT_CONFIG,
+      governedTools: ["exec"],
+    });
+
+    mockEnforceAndForward.mockResolvedValueOnce({
+      content: [{ type: "text", text: "ok" }],
+    });
+
+    const tool = api._tools[0].def;
+    await tool.execute("my-call-id", { command: "ls" });
+
+    expect(mockEnforceAndForward).toHaveBeenCalledWith(
+      expect.anything(),
+      "exec",
+      { command: "ls" },
+      undefined,
+      { session: "my-call-id" }
+    );
+  });
+
+  it("uses explicit sessionKey from params when present", async () => {
+    const api = createMockApi();
+    registerTools(api, {
+      ...DEFAULT_CONFIG,
+      governedTools: ["exec"],
+    });
+
+    mockEnforceAndForward.mockResolvedValueOnce({
+      content: [{ type: "text", text: "ok" }],
+    });
+
+    const tool = api._tools[0].def;
+    await tool.execute("call-id", { command: "ls", sessionKey: "explicit-session" });
+
+    expect(mockEnforceAndForward).toHaveBeenCalledWith(
+      expect.anything(),
+      "exec",
+      { command: "ls", sessionKey: "explicit-session" },
+      undefined,
+      { session: "explicit-session" }
+    );
   });
 });

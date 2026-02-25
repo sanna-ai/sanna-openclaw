@@ -13,6 +13,7 @@ import type {
   ToolInvokeRequest,
   ToolResult,
 } from "./types.js";
+import { fetchWithTimeout } from "./http.js";
 
 const SIDECAR_TIMEOUT_MS = 5_000;
 const GATEWAY_TIMEOUT_MS = 30_000;
@@ -26,7 +27,8 @@ export async function enforce(
   config: SannaConfig,
   tool: string,
   args: Record<string, unknown>,
-  action?: string
+  action?: string,
+  session?: string
 ): Promise<EnforceResponse> {
   const port = config.sidecarPort ?? 18890;
   const url = `http://127.0.0.1:${port}/enforce`;
@@ -37,6 +39,7 @@ export async function enforce(
     timestamp: new Date().toISOString(),
   };
   if (action !== undefined) body.action = action;
+  if (session !== undefined) body.session = session;
 
   try {
     const res = await fetchWithTimeout(url, {
@@ -108,9 +111,10 @@ export async function enforceAndForward(
   config: SannaConfig,
   tool: string,
   args: Record<string, unknown>,
-  action?: string
+  action?: string,
+  context?: { session?: string }
 ): Promise<ToolResult> {
-  const response = await enforce(config, tool, args, action);
+  const response = await enforce(config, tool, args, action, context?.session);
 
   if (response.decision === "deny") {
     const denyResult: Record<string, unknown> = {
@@ -166,10 +170,6 @@ export async function enforceAndForward(
 }
 
 // ---------------------------------------------------------------------------
-// Fetch with timeout
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // Map sidecar response format to our internal format
 // ---------------------------------------------------------------------------
 
@@ -198,21 +198,4 @@ function mapSidecarResponse(raw: Record<string, unknown>): EnforceResponse {
     receipt_hash: receiptHash,
     constitution_id: receipt?.constitution_hash as string | undefined,
   };
-}
-
-// ---------------------------------------------------------------------------
-// Fetch with timeout
-// ---------------------------------------------------------------------------
-
-function fetchWithTimeout(
-  url: string,
-  init: RequestInit,
-  timeoutMs: number
-): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  return fetch(url, { ...init, signal: controller.signal }).finally(() =>
-    clearTimeout(timer)
-  );
 }

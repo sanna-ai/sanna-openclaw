@@ -6,6 +6,7 @@ Fail-closed: /enforce returns halt when no constitution is loaded or on any erro
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
@@ -152,9 +153,7 @@ def create_app(
             if path.is_file():
                 resolved = path
             elif path.is_dir():
-                yamls = sorted(path.glob("*.yaml")) + sorted(path.glob("*.yml"))
-                if yamls:
-                    resolved = yamls[0]
+                resolved = _resolve_constitution_dir(path)
 
             if resolved is not None:
                 constitution = load_constitution(str(resolved))
@@ -193,6 +192,22 @@ def create_app(
                 store = ReceiptStore(dev_path)
             _store_holder[0] = store
             logger.info("Receipt store ready")
+
+            # 3b. Stats persistence — create table + load
+            try:
+                with store._lock:
+                    store._conn.execute("""
+                        CREATE TABLE IF NOT EXISTS sanna_stats (
+                            key TEXT PRIMARY KEY,
+                            value INTEGER DEFAULT 0
+                        )
+                    """)
+                    store._conn.commit()
+                    for row in store._conn.execute("SELECT key, value FROM sanna_stats"):
+                        stats[row["key"]] = row["value"]
+                logger.info("Stats loaded from DB: %s", stats)
+            except Exception:
+                logger.exception("Failed to initialize stats table")
         except Exception:
             logger.exception("Failed to initialise receipt store")
 
@@ -244,6 +259,21 @@ def create_app(
 
         return receipt
 
+    def _inc_stat(key: str) -> None:
+        """Increment an in-memory stat and persist to DB."""
+        stats[key] = stats.get(key, 0) + 1
+        if store is not None:
+            try:
+                with store._lock:
+                    store._conn.execute(
+                        "INSERT INTO sanna_stats (key, value) VALUES (?, 1) "
+                        "ON CONFLICT(key) DO UPDATE SET value = value + 1",
+                        (key,),
+                    )
+                    store._conn.commit()
+            except Exception:
+                logger.exception("Failed to persist stat %s", key)
+
     def _receipt_to_summary(receipt: dict[str, Any]) -> ReceiptSummary:
         """Convert a full receipt dict to a response summary."""
         sig_block = receipt.get("receipt_signature", {})
@@ -273,11 +303,11 @@ def create_app(
     # -----------------------------------------------------------------------
     @app.post("/enforce", response_model=EnforceResponse)
     async def enforce(request: EnforceRequest) -> EnforceResponse:
-        stats["total"] += 1
+        _inc_stat("total")
 
         # Fail-closed: no sanna library
         if not SANNA_AVAILABLE:
-            stats["halted"] += 1
+            _inc_stat("halted")
             return EnforceResponse(
                 verdict="halt",
                 reason="sanna library not available — fail-closed",
@@ -285,7 +315,7 @@ def create_app(
 
         # Fail-closed: no constitution loaded
         if constitution is None:
-            stats["halted"] += 1
+            _inc_stat("halted")
             return EnforceResponse(
                 verdict="halt",
                 reason="No constitution loaded — fail-closed",
@@ -295,7 +325,7 @@ def create_app(
         try:
             decision = evaluate_authority(request.tool, request.args, constitution)
         except Exception as exc:
-            stats["halted"] += 1
+            _inc_stat("halted")
             logger.exception("Authority evaluation error for %s", request.tool)
             return EnforceResponse(
                 verdict="halt",
@@ -331,11 +361,11 @@ def create_app(
 
         # Update stats
         if verdict == "allow":
-            stats["allowed"] += 1
+            _inc_stat("allowed")
         elif verdict == "escalate":
-            stats["escalated"] += 1
+            _inc_stat("escalated")
         else:
-            stats["halted"] += 1
+            _inc_stat("halted")
 
         return EnforceResponse(
             verdict=verdict,
@@ -382,6 +412,19 @@ def create_app(
     # -----------------------------------------------------------------------
     # GET /receipts — query with ?tool=&verdict=&limit=
     # -----------------------------------------------------------------------
+    # Check json1 availability for SQL-level receipt filtering
+    _has_json1 = False
+    if store is not None:
+        try:
+            _has_json1 = store._has_json1
+        except AttributeError:
+            try:
+                with store._lock:
+                    store._conn.execute("SELECT json_extract('{}', '$')")
+                    _has_json1 = True
+            except Exception:
+                pass
+
     @app.get("/receipts")
     async def list_receipts(
         tool: str | None = None,
@@ -391,17 +434,37 @@ def create_app(
         if store is None:
             return []
 
+        results: list[dict[str, Any]] = []
         try:
-            results = store.query(limit=limit)
+            if _has_json1 and (tool is not None or verdict is not None):
+                # SQL-level filtering via json_extract
+                clauses = ["1=1"]
+                params: list[Any] = []
+                if tool is not None:
+                    clauses.append("json_extract(receipt_json, '$.tool') = ?")
+                    params.append(tool)
+                if verdict is not None:
+                    clauses.append("json_extract(receipt_json, '$.verdict') = ?")
+                    params.append(verdict)
+                where = " AND ".join(clauses)
+                sql = (
+                    f"SELECT receipt_json FROM receipts "
+                    f"WHERE {where} ORDER BY timestamp DESC LIMIT ?"
+                )
+                params.append(limit)
+                with store._lock:
+                    rows = store._conn.execute(sql, params).fetchall()
+                results = [json.loads(row["receipt_json"]) for row in rows]
+            else:
+                # Fallback: query all then filter in Python
+                results = store.query(limit=limit)
+                if tool is not None:
+                    results = [r for r in results if r.get("tool") == tool]
+                if verdict is not None:
+                    results = [r for r in results if r.get("verdict") == verdict]
         except Exception:
             logger.exception("Receipt query failed")
             return []
-
-        # Apply tool/verdict filters (ReceiptStore doesn't have these columns)
-        if tool is not None:
-            results = [r for r in results if r.get("tool") == tool]
-        if verdict is not None:
-            results = [r for r in results if r.get("verdict") == verdict]
 
         # Return summaries
         return [
@@ -440,6 +503,31 @@ def create_app(
         )
 
     return app
+
+
+def _resolve_constitution_dir(dir_path: Path) -> Path | None:
+    """Resolve constitution file from a directory.
+
+    Priority: default.yaml/yml -> constitution.yaml/yml -> alphabetical (with warning).
+    """
+    # 1. Preferred names
+    for name in ("default.yaml", "default.yml", "constitution.yaml", "constitution.yml"):
+        candidate = dir_path / name
+        if candidate.is_file():
+            return candidate
+
+    # 2. Alphabetical fallback
+    yamls = sorted(dir_path.glob("*.yaml")) + sorted(dir_path.glob("*.yml"))
+    if yamls:
+        logger.warning(
+            "No default.yaml found in %s, using %s. "
+            "Consider naming your constitution default.yaml or specifying the full path.",
+            dir_path,
+            yamls[0].name,
+        )
+        return yamls[0]
+
+    return None
 
 
 def _count_boundaries(constitution: Constitution) -> dict[str, int]:

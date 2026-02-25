@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { PluginAPI, SannaConfig } from "../src/types.js";
 import { registerCli } from "../src/cli.js";
 
@@ -91,9 +91,24 @@ function createMockProgram(): {
   return { program, commands };
 }
 
+let fetchMock: ReturnType<typeof vi.fn>;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  fetchMock = vi.fn();
+  vi.stubGlobal("fetch", fetchMock);
 });
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // registerCli
@@ -144,5 +159,30 @@ describe("registerCli", () => {
     const audit = commands.find((c) => c.name === "audit");
     expect(audit).toBeDefined();
     expect(audit!.options.some((o) => o.flags.includes("--limit"))).toBe(true);
+  });
+
+  it("audit command uses POST method with limit in body", async () => {
+    const api = createMockApi();
+    registerCli(api, DEFAULT_CONFIG);
+
+    const { program, commands } = createMockProgram();
+    api._cliRegistrations[0].fn({ program });
+
+    const audit = commands.find((c) => c.name === "audit");
+    expect(audit).toBeDefined();
+    expect(audit!.action).toBeDefined();
+
+    fetchMock.mockResolvedValueOnce(jsonResponse([]));
+
+    // Invoke the audit action with opts
+    await audit!.action!({ limit: "50" });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://127.0.0.1:18890/audit");
+    expect(init.method).toBe("POST");
+    expect(init.headers["Content-Type"]).toBe("application/json");
+    const body = JSON.parse(init.body as string);
+    expect(body.limit).toBe(50);
   });
 });

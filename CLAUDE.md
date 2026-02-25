@@ -119,10 +119,10 @@ All validated against the sanna library. See docs/CONSTITUTION_GUIDE.md.
 
 ## Test Commands
 
-npx vitest run                    # 91 TypeScript tests (10 files)
-cd sidecar && python -m pytest tests/ -v   # 13 Python sidecar tests
+npx vitest run                    # 106 TypeScript tests (11 files)
+cd sidecar && python -m pytest tests/ -v   # 24 Python sidecar tests
 
-Total: 104 tests (91 TS + 13 Python)
+Total: 130 tests (106 TS + 24 Python)
 
 Integration tests (tests/integration.test.ts) spawn a real Python sidecar
 and exercise the full enforcement loop. They require sanna + uvicorn installed.
