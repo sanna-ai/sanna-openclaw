@@ -8,41 +8,10 @@
 
 export interface SannaConfig {
   constitutionPath?: string;
-  gatewayPort?: number;
-  gatewayToken?: string;
-  sidecarPort?: number;
+  privateKeyPath?: string;
+  receiptStorePath?: string;
   governedTools?: string[];
   enforcementMode?: "enforce" | "audit" | "passthrough";
-}
-
-// ---------------------------------------------------------------------------
-// Sidecar communication
-// ---------------------------------------------------------------------------
-
-/** POST /enforce request body */
-export interface EnforceRequest {
-  tool: string;
-  args: Record<string, unknown>;
-  action?: string;
-  session?: string;
-  timestamp: string;
-}
-
-/** POST /enforce response body */
-export interface EnforceResponse {
-  decision: "allow" | "deny" | "escalate";
-  receipt_hash?: string;
-  receipt?: Record<string, unknown>;
-  reason?: string;
-  constitution_id?: string;
-}
-
-// ---------------------------------------------------------------------------
-// OpenClaw tool result format
-// ---------------------------------------------------------------------------
-
-export interface ToolResult {
-  content: Array<{ type: string; text?: string; [key: string]: unknown }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -95,4 +64,12 @@ export interface ToolDefinition {
     id: string,
     params: Record<string, unknown>
   ) => Promise<ToolResult>;
+}
+
+// ---------------------------------------------------------------------------
+// OpenClaw tool result format
+// ---------------------------------------------------------------------------
+
+export interface ToolResult {
+  content: Array<{ type: string; text?: string; [key: string]: unknown }>;
 }

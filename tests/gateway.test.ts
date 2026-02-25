@@ -1,6 +1,17 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { PluginAPI, SannaConfig } from "../src/types.js";
-import { registerGatewayMethods } from "../src/gateway.js";
+import { registerGatewayMethods, type GatewayDeps } from "../src/gateway.js";
+
+// ---------------------------------------------------------------------------
+// Mock @sanna/core ReceiptStore
+// ---------------------------------------------------------------------------
+
+const mockStoreCount = vi.fn(() => 0);
+const mockStoreQuery = vi.fn(() => []);
+
+vi.mock("@sanna/core", () => ({
+  ReceiptStore: vi.fn(),
+}));
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -21,6 +32,7 @@ function createMockApi(): MockAPI {
     registerTool: vi.fn(),
     registerService: vi.fn(),
     registerHook: vi.fn(),
+    on: vi.fn(),
     registerGatewayMethod(name: string, handler: GatewayHandler) {
       methods.set(name, handler);
     },
@@ -31,29 +43,36 @@ function createMockApi(): MockAPI {
 }
 
 const DEFAULT_CONFIG: SannaConfig = {
-  sidecarPort: 18890,
   enforcementMode: "enforce",
-  constitutionPath: "/path/to/constitution.yaml",
   governedTools: ["exec", "write"],
 };
 
-let fetchMock: ReturnType<typeof vi.fn>;
+const fakeDeps: GatewayDeps = {
+  constitution: {
+    schema_version: "0.1.0",
+    identity: { agent_name: "test-agent", domain: "testing", description: "test", extensions: {} },
+    provenance: {} as GatewayDeps["constitution"]["provenance"],
+    boundaries: [],
+    trust_tiers: { tiers: [] } as unknown as GatewayDeps["constitution"]["trust_tiers"],
+    halt_conditions: [],
+    invariants: [],
+    policy_hash: "hash-abc",
+    authority_boundaries: null,
+    trusted_sources: null,
+  } as GatewayDeps["constitution"],
+  store: {
+    count: mockStoreCount,
+    query: mockStoreQuery,
+    save: vi.fn(),
+    close: vi.fn(),
+  } as unknown as GatewayDeps["store"],
+};
 
 beforeEach(() => {
-  fetchMock = vi.fn();
-  vi.stubGlobal("fetch", fetchMock);
+  vi.clearAllMocks();
+  mockStoreCount.mockReturnValue(0);
+  mockStoreQuery.mockReturnValue([]);
 });
-
-afterEach(() => {
-  vi.restoreAllMocks();
-});
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
 
 // ---------------------------------------------------------------------------
 // sanna.status
@@ -62,49 +81,29 @@ function jsonResponse(body: unknown, status = 200): Response {
 describe("sanna.status", () => {
   it("registers the method", () => {
     const api = createMockApi();
-    registerGatewayMethods(api, DEFAULT_CONFIG);
+    registerGatewayMethods(api, DEFAULT_CONFIG, fakeDeps);
     expect(api._methods.has("sanna.status")).toBe(true);
   });
 
-  it("returns status when sidecar is healthy", async () => {
+  it("returns status with constitution info and stats", async () => {
     const api = createMockApi();
-    registerGatewayMethods(api, DEFAULT_CONFIG);
+    mockStoreCount.mockReturnValueOnce(10).mockReturnValueOnce(8).mockReturnValueOnce(2);
+    registerGatewayMethods(api, DEFAULT_CONFIG, fakeDeps);
 
-    // health check
-    fetchMock.mockResolvedValueOnce(jsonResponse({ status: "ok" }));
-    // status call
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({
-        constitution: { name: "test", version: "1.0" },
-        enforcement_stats: { total: 5, allowed: 4, denied: 1 },
+    const respond = vi.fn();
+    await api._methods.get("sanna.status")!({ respond });
+
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        mode: "enforce",
+        constitution: expect.objectContaining({
+          name: "test-agent",
+        }),
+        governedTools: ["exec", "write"],
+        enforcement_stats: { total: 10, allowed: 8, denied: 2, escalated: 0 },
       })
     );
-
-    const respond = vi.fn();
-    await api._methods.get("sanna.status")!({ respond });
-
-    expect(respond).toHaveBeenCalledWith(true, expect.objectContaining({
-      mode: "enforce",
-      sidecar: "healthy",
-      constitutionPath: "/path/to/constitution.yaml",
-      governedTools: ["exec", "write"],
-      constitution: { name: "test", version: "1.0" },
-    }));
-  });
-
-  it("returns unreachable when sidecar is down", async () => {
-    const api = createMockApi();
-    registerGatewayMethods(api, DEFAULT_CONFIG);
-
-    fetchMock.mockRejectedValueOnce(new Error("ECONNREFUSED"));
-
-    const respond = vi.fn();
-    await api._methods.get("sanna.status")!({ respond });
-
-    expect(respond).toHaveBeenCalledWith(true, expect.objectContaining({
-      mode: "enforce",
-      sidecar: "unreachable",
-    }));
   });
 });
 
@@ -115,54 +114,35 @@ describe("sanna.status", () => {
 describe("sanna.audit", () => {
   it("registers the method", () => {
     const api = createMockApi();
-    registerGatewayMethods(api, DEFAULT_CONFIG);
+    registerGatewayMethods(api, DEFAULT_CONFIG, fakeDeps);
     expect(api._methods.has("sanna.audit")).toBe(true);
   });
 
-  it("proxies audit data from sidecar", async () => {
+  it("returns receipts from store", async () => {
     const api = createMockApi();
-    registerGatewayMethods(api, DEFAULT_CONFIG);
-
-    const auditData = [
-      { tool: "exec", decision: "allow", timestamp: "2026-01-01T00:00:00Z" },
-    ];
-    fetchMock.mockResolvedValueOnce(jsonResponse(auditData));
+    const receipts = [{ receipt_id: "r-1", tool: "exec" }];
+    mockStoreQuery.mockReturnValue(receipts);
+    registerGatewayMethods(api, DEFAULT_CONFIG, fakeDeps);
 
     const respond = vi.fn();
     await api._methods.get("sanna.audit")!({ respond });
 
-    expect(respond).toHaveBeenCalledWith(true, auditData);
+    expect(respond).toHaveBeenCalledWith(true, receipts);
   });
 
-  it("returns error when sidecar is unreachable", async () => {
+  it("returns error when query fails", async () => {
     const api = createMockApi();
-    registerGatewayMethods(api, DEFAULT_CONFIG);
-
-    fetchMock.mockRejectedValueOnce(new Error("ECONNREFUSED"));
+    mockStoreQuery.mockImplementation(() => {
+      throw new Error("DB error");
+    });
+    registerGatewayMethods(api, DEFAULT_CONFIG, fakeDeps);
 
     const respond = vi.fn();
     await api._methods.get("sanna.audit")!({ respond });
 
-    expect(respond).toHaveBeenCalledWith(false, expect.objectContaining({
-      error: "Sidecar unreachable",
-    }));
-  });
-
-  it("uses POST method for audit call", async () => {
-    const api = createMockApi();
-    registerGatewayMethods(api, DEFAULT_CONFIG);
-
-    fetchMock.mockResolvedValueOnce(jsonResponse([]));
-
-    const respond = vi.fn();
-    await api._methods.get("sanna.audit")!({ respond });
-
-    expect(fetchMock).toHaveBeenCalledOnce();
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("http://127.0.0.1:18890/audit");
-    expect(init.method).toBe("POST");
-    expect(init.headers["Content-Type"]).toBe("application/json");
-    const body = JSON.parse(init.body as string);
-    expect(body.limit).toBe(20);
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      expect.objectContaining({ error: "Receipt query failed" })
+    );
   });
 });

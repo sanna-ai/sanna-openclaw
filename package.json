@@ -6,11 +6,12 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "openclaw": {
-    "extensions": ["./dist/index.js"]
+    "extensions": [
+      "./dist/index.js"
+    ]
   },
   "files": [
     "dist/**/*",
-    "sidecar/**/*",
     "constitutions/**/*",
     "openclaw.plugin.json",
     "README.md",
@@ -40,5 +41,8 @@
     "@types/node": "^22.19.11",
     "typescript": "^5.9.3",
     "vitest": "^2.1.9"
+  },
+  "dependencies": {
+    "@sanna/core": "file:../sanna-ts/packages/core"
   }
 }

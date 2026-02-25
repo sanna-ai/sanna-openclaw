@@ -1,5 +1,23 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { PluginAPI, SannaConfig } from "../src/types.js";
+import type { HookDeps } from "../src/hooks.js";
+
+// ---------------------------------------------------------------------------
+// Mock @sanna/core
+// ---------------------------------------------------------------------------
+
+const mockEvaluateAuthority = vi.fn();
+const mockGenerateReceipt = vi.fn();
+const mockSignReceipt = vi.fn();
+const mockStoreSave = vi.fn();
+
+vi.mock("@sanna/core", () => ({
+  evaluateAuthority: (...args: unknown[]) => mockEvaluateAuthority(...args),
+  generateReceipt: (...args: unknown[]) => mockGenerateReceipt(...args),
+  signReceipt: (...args: unknown[]) => mockSignReceipt(...args),
+  ReceiptStore: vi.fn(),
+}));
+
 import { registerHooks } from "../src/hooks.js";
 
 // ---------------------------------------------------------------------------
@@ -34,30 +52,44 @@ function createMockApi(): MockAPI {
 }
 
 const ENFORCE_CONFIG: SannaConfig = {
-  sidecarPort: 18890,
   enforcementMode: "enforce",
   governedTools: ["exec", "write", "browser"],
 };
 
 const AUDIT_CONFIG: SannaConfig = {
-  sidecarPort: 18890,
   enforcementMode: "audit",
   governedTools: ["exec", "write", "browser"],
 };
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
+function mockConstitution() {
+  return {
+    schema_version: "0.1.0",
+    identity: { agent_name: "test-agent", domain: "testing", description: "test", extensions: {} },
+    provenance: { authored_by: "test", approved_by: [], approval_date: "", approval_method: "" },
+    boundaries: [],
+    trust_tiers: { tiers: [] },
+    halt_conditions: [],
+    invariants: [],
+    policy_hash: "test-hash-abc123",
+    authority_boundaries: null,
+    trusted_sources: null,
+  };
 }
 
-let fetchMock: ReturnType<typeof vi.fn>;
+function createDeps(overrides?: Partial<HookDeps>): HookDeps {
+  return {
+    constitution: mockConstitution() as HookDeps["constitution"],
+    store: { save: mockStoreSave } as unknown as HookDeps["store"],
+    privateKey: null,
+    ...overrides,
+  };
+}
 
 beforeEach(() => {
-  fetchMock = vi.fn();
-  vi.stubGlobal("fetch", fetchMock);
   vi.clearAllMocks();
+  // Default: generate receipt returns an object with receipt_id
+  mockGenerateReceipt.mockReturnValue({ receipt_id: "r-mock-123" });
+  mockSignReceipt.mockImplementation((r: unknown) => r);
 });
 
 afterEach(() => {
@@ -71,20 +103,23 @@ afterEach(() => {
 describe("before_tool_call", () => {
   it("registers three hooks", () => {
     const api = createMockApi();
-    registerHooks(api, ENFORCE_CONFIG);
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
 
     expect(api._hooks.has("before_tool_call")).toBe(true);
     expect(api._hooks.has("after_tool_call")).toBe(true);
     expect(api._hooks.has("tool_result_persist")).toBe(true);
   });
 
-  it("calls sidecar /enforce with tool name and params", async () => {
+  it("calls evaluateAuthority with tool name and params", async () => {
     const api = createMockApi();
-    registerHooks(api, ENFORCE_CONFIG);
+    const deps = createDeps();
+    registerHooks(api, ENFORCE_CONFIG, deps);
 
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({ verdict: "allow", receipt: { receipt_id: "r-123" } })
-    );
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
 
     const hook = api._hooks.get("before_tool_call")!;
     await hook(
@@ -92,25 +127,23 @@ describe("before_tool_call", () => {
       { toolName: "exec", agentId: "agent-1", sessionKey: "sess-1" }
     );
 
-    expect(fetchMock).toHaveBeenCalledOnce();
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("http://127.0.0.1:18890/enforce");
-    expect(init.method).toBe("POST");
-
-    const body = JSON.parse(init.body as string);
-    expect(body.tool).toBe("exec");
-    expect(body.args).toEqual({ command: "ls" });
-    expect(body.context.agent_id).toBe("agent-1");
-    expect(body.context.session_id).toBe("sess-1");
+    expect(mockEvaluateAuthority).toHaveBeenCalledOnce();
+    expect(mockEvaluateAuthority).toHaveBeenCalledWith(
+      "exec",
+      { command: "ls" },
+      deps.constitution
+    );
   });
 
-  it("returns { blocked: false } when verdict is allow", async () => {
+  it("returns { blocked: false } when decision is allow", async () => {
     const api = createMockApi();
-    registerHooks(api, ENFORCE_CONFIG);
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
 
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({ verdict: "allow", receipt: { receipt_id: "r-allow" } })
-    );
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
 
     const hook = api._hooks.get("before_tool_call")!;
     const result = await hook(
@@ -121,17 +154,15 @@ describe("before_tool_call", () => {
     expect(result).toEqual({ blocked: false });
   });
 
-  it("returns { block: true } when verdict is halt", async () => {
+  it("returns { block: true } when decision is halt", async () => {
     const api = createMockApi();
-    registerHooks(api, ENFORCE_CONFIG);
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
 
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({
-        verdict: "halt",
-        reason: "Tool not allowed",
-        receipt: { receipt_id: "r-halt" },
-      })
-    );
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "halt",
+      reason: "Tool not allowed",
+      boundary_type: "cannot_execute",
+    });
 
     const hook = api._hooks.get("before_tool_call")!;
     const result = (await hook(
@@ -144,17 +175,15 @@ describe("before_tool_call", () => {
     expect(result.blockReason).toContain("Tool not allowed");
   });
 
-  it("returns { block: true } when verdict is escalate", async () => {
+  it("returns { block: true } when decision is escalate", async () => {
     const api = createMockApi();
-    registerHooks(api, ENFORCE_CONFIG);
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
 
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({
-        verdict: "escalate",
-        reason: "Needs human approval",
-        receipt: { receipt_id: "r-esc" },
-      })
-    );
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "escalate",
+      reason: "Needs human approval",
+      boundary_type: "must_escalate",
+    });
 
     const hook = api._hooks.get("before_tool_call")!;
     const result = (await hook(
@@ -167,29 +196,47 @@ describe("before_tool_call", () => {
     expect(result.blockReason).toContain("Needs human approval");
   });
 
-  it("blocks when sidecar is unreachable (fail closed)", async () => {
+  it("generates and saves a receipt for every decision", async () => {
     const api = createMockApi();
-    registerHooks(api, ENFORCE_CONFIG);
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
 
-    fetchMock.mockRejectedValueOnce(new Error("ECONNREFUSED"));
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
 
     const hook = api._hooks.get("before_tool_call")!;
-    const result = (await hook(
-      { toolName: "exec", params: {} },
-      { toolName: "exec" }
-    )) as Record<string, unknown>;
+    await hook({ toolName: "exec", params: {} }, { toolName: "exec" });
 
-    expect(result.block).toBe(true);
-    expect(result.blockReason).toContain("unavailable");
+    expect(mockGenerateReceipt).toHaveBeenCalledOnce();
+    expect(mockStoreSave).toHaveBeenCalledOnce();
   });
 
-  it("blocks when sidecar returns non-200 (fail closed)", async () => {
+  it("saves receipt for deny decisions too", async () => {
     const api = createMockApi();
-    registerHooks(api, ENFORCE_CONFIG);
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
 
-    fetchMock.mockResolvedValueOnce(
-      new Response("Internal Server Error", { status: 500 })
-    );
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "halt",
+      reason: "Blocked",
+      boundary_type: "cannot_execute",
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook({ toolName: "rm", params: {} }, { toolName: "rm" });
+
+    expect(mockGenerateReceipt).toHaveBeenCalledOnce();
+    expect(mockStoreSave).toHaveBeenCalledOnce();
+  });
+
+  it("blocks when evaluation throws (enforce mode, fail closed)", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockImplementation(() => {
+      throw new Error("evaluation error");
+    });
 
     const hook = api._hooks.get("before_tool_call")!;
     const result = (await hook(
@@ -198,20 +245,41 @@ describe("before_tool_call", () => {
     )) as Record<string, unknown>;
 
     expect(result.block).toBe(true);
-    expect(result.blockReason).toContain("unavailable");
+    expect(result.blockReason).toContain("evaluation failed");
+  });
+
+  it("blocks when receipt persistence fails (enforce mode)", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+    mockGenerateReceipt.mockImplementation(() => {
+      throw new Error("DB write failed");
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "exec", params: {} },
+      { toolName: "exec" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("receipt persistence failed");
   });
 
   it("does not block in audit mode on deny", async () => {
     const api = createMockApi();
-    registerHooks(api, AUDIT_CONFIG);
+    registerHooks(api, AUDIT_CONFIG, createDeps());
 
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({
-        verdict: "halt",
-        reason: "Not allowed",
-        receipt: { receipt_id: "r-audit" },
-      })
-    );
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "halt",
+      reason: "Not allowed",
+      boundary_type: "cannot_execute",
+    });
 
     const hook = api._hooks.get("before_tool_call")!;
     const result = await hook(
@@ -219,18 +287,19 @@ describe("before_tool_call", () => {
       { toolName: "rm" }
     );
 
-    // Audit mode: logs but does not block
     expect(result).toBeUndefined();
     expect(api.logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("DENY rm")
     );
   });
 
-  it("does not block in audit mode when sidecar unreachable", async () => {
+  it("does not block in audit mode when evaluation throws", async () => {
     const api = createMockApi();
-    registerHooks(api, AUDIT_CONFIG);
+    registerHooks(api, AUDIT_CONFIG, createDeps());
 
-    fetchMock.mockRejectedValueOnce(new Error("ECONNREFUSED"));
+    mockEvaluateAuthority.mockImplementation(() => {
+      throw new Error("evaluation error");
+    });
 
     const hook = api._hooks.get("before_tool_call")!;
     const result = await hook(
@@ -240,13 +309,13 @@ describe("before_tool_call", () => {
 
     expect(result).toBeUndefined();
     expect(api.logger.error).toHaveBeenCalledWith(
-      expect.stringContaining("Sidecar unreachable")
+      expect.stringContaining("evaluation error")
     );
   });
 
   it("blocks when toolName cannot be extracted (enforce mode)", async () => {
     const api = createMockApi();
-    registerHooks(api, ENFORCE_CONFIG);
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
 
     const hook = api._hooks.get("before_tool_call")!;
     const result = (await hook(
@@ -260,28 +329,24 @@ describe("before_tool_call", () => {
 
   it("allows when toolName cannot be extracted (audit mode)", async () => {
     const api = createMockApi();
-    registerHooks(api, AUDIT_CONFIG);
+    registerHooks(api, AUDIT_CONFIG, createDeps());
 
     const hook = api._hooks.get("before_tool_call")!;
-    const result = await hook(
-      { noToolName: true },
-      {}
-    );
+    const result = await hook({ noToolName: true }, {});
 
     expect(result).toBeUndefined();
   });
 
   it("includes receipt ID in block reason", async () => {
     const api = createMockApi();
-    registerHooks(api, ENFORCE_CONFIG);
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
 
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({
-        verdict: "halt",
-        reason: "Forbidden",
-        receipt: { receipt_id: "receipt-abc-123" },
-      })
-    );
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "halt",
+      reason: "Forbidden",
+      boundary_type: "cannot_execute",
+    });
+    mockGenerateReceipt.mockReturnValue({ receipt_id: "receipt-abc-123" });
 
     const hook = api._hooks.get("before_tool_call")!;
     const result = (await hook(
@@ -294,26 +359,47 @@ describe("before_tool_call", () => {
 
   it("logs ALLOW with receipt ID prefix", async () => {
     const api = createMockApi();
-    registerHooks(api, ENFORCE_CONFIG);
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
 
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({
-        verdict: "allow",
-        receipt: { receipt_id: "abcdef12-3456-7890" },
-      })
-    );
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+    mockGenerateReceipt.mockReturnValue({
+      receipt_id: "abcdef12-3456-7890",
+    });
 
     const hook = api._hooks.get("before_tool_call")!;
-    await hook(
-      { toolName: "ls", params: {} },
-      { toolName: "ls" }
-    );
+    await hook({ toolName: "ls", params: {} }, { toolName: "ls" });
 
     expect(api.logger.info).toHaveBeenCalledWith(
       expect.stringContaining("ALLOW ls")
     );
     expect(api.logger.info).toHaveBeenCalledWith(
       expect.stringContaining("abcdef12")
+    );
+  });
+
+  it("signs receipt when privateKey is provided", async () => {
+    const api = createMockApi();
+    const fakeKey = {} as HookDeps["privateKey"];
+    registerHooks(api, ENFORCE_CONFIG, createDeps({ privateKey: fakeKey }));
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook({ toolName: "exec", params: {} }, { toolName: "exec" });
+
+    expect(mockSignReceipt).toHaveBeenCalledOnce();
+    expect(mockSignReceipt).toHaveBeenCalledWith(
+      expect.anything(),
+      fakeKey,
+      "sanna-openclaw"
     );
   });
 });
@@ -325,15 +411,13 @@ describe("before_tool_call", () => {
 describe("after_tool_call", () => {
   it("logs receipt info after allowed call", async () => {
     const api = createMockApi();
-    registerHooks(api, ENFORCE_CONFIG);
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
 
-    // Trigger before_tool_call to populate lastReceipt
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({
-        verdict: "allow",
-        receipt: { receipt_id: "r-after-test" },
-      })
-    );
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
 
     const beforeHook = api._hooks.get("before_tool_call")!;
     await beforeHook(
@@ -341,7 +425,6 @@ describe("after_tool_call", () => {
       { toolName: "exec" }
     );
 
-    // Now trigger after_tool_call
     const afterHook = api._hooks.get("after_tool_call")!;
     afterHook();
 
@@ -361,7 +444,7 @@ describe("after_tool_call", () => {
 describe("tool_result_persist", () => {
   it("annotates result with receipt hash", () => {
     const api = createMockApi();
-    registerHooks(api, ENFORCE_CONFIG);
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
 
     const hook = api._hooks.get("tool_result_persist")!;
     const result = hook({
@@ -379,7 +462,7 @@ describe("tool_result_persist", () => {
 
   it("returns undefined for non-sanna results", () => {
     const api = createMockApi();
-    registerHooks(api, ENFORCE_CONFIG);
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
 
     const hook = api._hooks.get("tool_result_persist")!;
     const result = hook({
@@ -390,7 +473,7 @@ describe("tool_result_persist", () => {
 
   it("removes _sanna_receipt_hash from annotated result", () => {
     const api = createMockApi();
-    registerHooks(api, ENFORCE_CONFIG);
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
 
     const hook = api._hooks.get("tool_result_persist")!;
     const result = hook({
@@ -404,7 +487,7 @@ describe("tool_result_persist", () => {
 
   it("returns undefined for null/undefined input", () => {
     const api = createMockApi();
-    registerHooks(api, ENFORCE_CONFIG);
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
 
     const hook = api._hooks.get("tool_result_persist")!;
     expect(hook(null)).toBeUndefined();
@@ -413,7 +496,7 @@ describe("tool_result_persist", () => {
 
   it("does not mutate the original result object", () => {
     const api = createMockApi();
-    registerHooks(api, ENFORCE_CONFIG);
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
 
     const hook = api._hooks.get("tool_result_persist")!;
     const original = {

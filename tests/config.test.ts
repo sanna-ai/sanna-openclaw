@@ -23,6 +23,7 @@ function createMockApi(
     registerTool: vi.fn(),
     registerService: vi.fn(),
     registerHook: vi.fn(),
+    on: vi.fn(),
     registerGatewayMethod: vi.fn(),
     registerCli: vi.fn(),
   };
@@ -38,9 +39,8 @@ describe("resolveConfig", () => {
     const config = resolveConfig(api);
 
     expect(config.constitutionPath).toBe("");
-    expect(config.gatewayPort).toBe(18789);
-    expect(config.gatewayToken).toBe("");
-    expect(config.sidecarPort).toBe(18890);
+    expect(config.privateKeyPath).toBe("");
+    expect(config.receiptStorePath).toBe("");
     expect(config.governedTools).toEqual(GOVERNED_TOOLS_DEFAULT);
     expect(config.enforcementMode).toBe("enforce");
   });
@@ -52,8 +52,6 @@ describe("resolveConfig", () => {
     const config = resolveConfig(api);
 
     expect(config.governedTools).toEqual(["exec", "write"]);
-    // Other fields still have defaults
-    expect(config.sidecarPort).toBe(18890);
     expect(config.enforcementMode).toBe("enforce");
   });
 
@@ -66,17 +64,6 @@ describe("resolveConfig", () => {
     expect(config.enforcementMode).toBe("audit");
   });
 
-  it("merges custom gatewayPort and gatewayToken", () => {
-    const api = createMockApi({
-      gatewayPort: 9999,
-      gatewayToken: "secret-token",
-    });
-    const config = resolveConfig(api);
-
-    expect(config.gatewayPort).toBe(9999);
-    expect(config.gatewayToken).toBe("secret-token");
-  });
-
   it("merges constitutionPath", () => {
     const api = createMockApi({
       constitutionPath: "/path/to/constitution.yaml",
@@ -84,6 +71,15 @@ describe("resolveConfig", () => {
     const config = resolveConfig(api);
 
     expect(config.constitutionPath).toBe("/path/to/constitution.yaml");
+  });
+
+  it("merges privateKeyPath", () => {
+    const api = createMockApi({
+      privateKeyPath: "/path/to/key.pem",
+    });
+    const config = resolveConfig(api);
+
+    expect(config.privateKeyPath).toBe("/path/to/key.pem");
   });
 });
 
@@ -145,9 +141,8 @@ describe("GOVERNED_TOOLS_DEFAULT", () => {
 describe("DEFAULT_CONFIG", () => {
   it("has correct default values", () => {
     expect(DEFAULT_CONFIG.constitutionPath).toBe("");
-    expect(DEFAULT_CONFIG.gatewayPort).toBe(18789);
-    expect(DEFAULT_CONFIG.gatewayToken).toBe("");
-    expect(DEFAULT_CONFIG.sidecarPort).toBe(18890);
+    expect(DEFAULT_CONFIG.privateKeyPath).toBe("");
+    expect(DEFAULT_CONFIG.receiptStorePath).toBe("");
     expect(DEFAULT_CONFIG.enforcementMode).toBe("enforce");
     expect(DEFAULT_CONFIG.governedTools).toEqual(GOVERNED_TOOLS_DEFAULT);
   });

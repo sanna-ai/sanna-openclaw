@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { PluginAPI } from "../src/types.js";
 
 // ---------------------------------------------------------------------------
-// Mocks — isolate index.ts from real side effects
+// Mocks
 // ---------------------------------------------------------------------------
 
 const mockReadHooksEnabled = vi.fn(() => true);
@@ -14,7 +14,15 @@ vi.mock("../src/http.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../src/sidecar.js", () => ({ registerSidecar: vi.fn() }));
+const mockLoadConstitution = vi.fn();
+const mockLoadPrivateKey = vi.fn();
+const mockReceiptStoreInstance = { save: vi.fn(), count: vi.fn(), query: vi.fn(), close: vi.fn() };
+vi.mock("@sanna/core", () => ({
+  loadConstitution: (...args: unknown[]) => mockLoadConstitution(...args),
+  loadPrivateKey: (...args: unknown[]) => mockLoadPrivateKey(...args),
+  ReceiptStore: vi.fn(() => mockReceiptStoreInstance),
+}));
+
 vi.mock("../src/hooks.js", () => ({ registerHooks: vi.fn() }));
 vi.mock("../src/gateway.js", () => ({ registerGatewayMethods: vi.fn() }));
 vi.mock("../src/cli.js", () => ({ registerCli: vi.fn() }));
@@ -38,12 +46,27 @@ function createMockApi(configOverrides?: Record<string, unknown>): PluginAPI {
   };
 }
 
+const fakeConstitution = {
+  schema_version: "0.1.0",
+  identity: { agent_name: "test-agent", domain: "testing", description: "test", extensions: {} },
+  provenance: {},
+  boundaries: [],
+  trust_tiers: { tiers: [] },
+  halt_conditions: [],
+  invariants: [],
+  policy_hash: "test-hash",
+  authority_boundaries: null,
+  trusted_sources: null,
+};
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockReadHooksEnabled.mockReturnValue(true);
+  mockLoadConstitution.mockReturnValue(fakeConstitution);
 });
 
 afterEach(() => {
@@ -88,6 +111,36 @@ describe("register — hooks.internal.enabled check", () => {
     expect(() => register(api)).not.toThrow();
     expect(api.logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("hooks.internal.enabled")
+    );
+  });
+});
+
+describe("register — constitution loading", () => {
+  it("loads constitution from auto-discovered path", () => {
+    const api = createMockApi();
+
+    expect(() => register(api)).not.toThrow();
+    expect(mockLoadConstitution).toHaveBeenCalled();
+  });
+
+  it("throws in enforce mode when constitution fails to load", () => {
+    mockLoadConstitution.mockImplementation(() => {
+      throw new Error("invalid YAML");
+    });
+    const api = createMockApi({ enforcementMode: "enforce" });
+
+    expect(() => register(api)).toThrow("invalid YAML");
+  });
+
+  it("warns in audit mode when constitution fails to load", () => {
+    mockLoadConstitution.mockImplementation(() => {
+      throw new Error("invalid YAML");
+    });
+    const api = createMockApi({ enforcementMode: "audit" });
+
+    expect(() => register(api)).not.toThrow();
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("invalid YAML")
     );
   });
 });

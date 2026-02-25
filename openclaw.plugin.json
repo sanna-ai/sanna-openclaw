@@ -9,24 +9,20 @@
     "properties": {
       "constitutionPath": {
         "type": "string",
-        "description": "Path to YAML constitution file"
+        "description": "Path to YAML constitution file or directory"
       },
-      "gatewayPort": {
-        "type": "number",
-        "default": 18789
-      },
-      "gatewayToken": {
+      "privateKeyPath": {
         "type": "string",
-        "description": "Gateway auth token for /tools/invoke forwarding"
+        "description": "Path to Ed25519 private key PEM for receipt signing"
       },
-      "sidecarPort": {
-        "type": "number",
-        "default": 18890
+      "receiptStorePath": {
+        "type": "string",
+        "description": "Path to SQLite receipt store database"
       },
       "governedTools": {
         "type": "array",
         "items": { "type": "string" },
-        "description": "Tool names to wrap with governance. Defaults to all tier 1+2 tools."
+        "description": "Tool names to govern. Defaults to all tier 1+2+3 tools."
       },
       "enforcementMode": {
         "type": "string",
@@ -36,8 +32,8 @@
     }
   },
   "uiHints": {
-    "constitutionPath": { "label": "Constitution Path", "placeholder": "~/.openclaw/sanna/constitution.yaml" },
-    "gatewayToken": { "label": "Gateway Token", "sensitive": true },
+    "constitutionPath": { "label": "Constitution Path", "placeholder": "./constitutions" },
+    "privateKeyPath": { "label": "Signing Key Path", "sensitive": true },
     "enforcementMode": { "label": "Enforcement Mode" }
   }
 }

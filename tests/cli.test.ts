@@ -1,5 +1,23 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { PluginAPI, SannaConfig } from "../src/types.js";
+import type { CliDeps } from "../src/cli.js";
+
+// ---------------------------------------------------------------------------
+// Mock @sanna/core and http
+// ---------------------------------------------------------------------------
+
+const mockStoreCount = vi.fn(() => 0);
+const mockStoreQuery = vi.fn(() => []);
+const mockReadHooksEnabled = vi.fn(() => true);
+
+vi.mock("@sanna/core", () => ({
+  ReceiptStore: vi.fn(),
+}));
+
+vi.mock("../src/http.js", () => ({
+  readHooksEnabled: () => mockReadHooksEnabled(),
+}));
+
 import { registerCli } from "../src/cli.js";
 
 // ---------------------------------------------------------------------------
@@ -22,8 +40,12 @@ function createMockApi(): MockAPI {
     registerTool: vi.fn(),
     registerService: vi.fn(),
     registerHook: vi.fn(),
+    on: vi.fn(),
     registerGatewayMethod: vi.fn(),
-    registerCli(fn: (ctx: { program: unknown }) => void, opts?: { commands: string[] }) {
+    registerCli(
+      fn: (ctx: { program: unknown }) => void,
+      opts?: { commands: string[] }
+    ) {
       cliRegistrations.push({ fn, opts: opts ?? { commands: [] } });
     },
     config: {},
@@ -32,11 +54,31 @@ function createMockApi(): MockAPI {
 }
 
 const DEFAULT_CONFIG: SannaConfig = {
-  sidecarPort: 18890,
   enforcementMode: "enforce",
-  constitutionPath: "/path/to/constitution.yaml",
   governedTools: ["exec", "write"],
 };
+
+function createDeps(): CliDeps {
+  return {
+    constitution: {
+      schema_version: "0.1.0",
+      identity: {
+        agent_name: "test-agent",
+        domain: "testing",
+        description: "test",
+        extensions: {},
+      },
+      policy_hash: "test-hash",
+    } as CliDeps["constitution"],
+    store: {
+      count: mockStoreCount,
+      query: mockStoreQuery,
+      save: vi.fn(),
+      close: vi.fn(),
+    } as unknown as CliDeps["store"],
+    constitutionPath: "/path/to/constitution.yaml",
+  };
+}
 
 // Track registered subcommands
 interface CommandRecord {
@@ -91,24 +133,16 @@ function createMockProgram(): {
   return { program, commands };
 }
 
-let fetchMock: ReturnType<typeof vi.fn>;
-
 beforeEach(() => {
   vi.clearAllMocks();
-  fetchMock = vi.fn();
-  vi.stubGlobal("fetch", fetchMock);
+  mockStoreCount.mockReturnValue(0);
+  mockStoreQuery.mockReturnValue([]);
+  mockReadHooksEnabled.mockReturnValue(true);
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
 
 // ---------------------------------------------------------------------------
 // registerCli
@@ -117,7 +151,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 describe("registerCli", () => {
   it("registers with commands: ['sanna']", () => {
     const api = createMockApi();
-    registerCli(api, DEFAULT_CONFIG);
+    registerCli(api, DEFAULT_CONFIG, createDeps());
 
     expect(api._cliRegistrations).toHaveLength(1);
     expect(api._cliRegistrations[0].opts.commands).toEqual(["sanna"]);
@@ -125,7 +159,7 @@ describe("registerCli", () => {
 
   it("creates sanna parent command with status, audit, verify, doctor subcommands", () => {
     const api = createMockApi();
-    registerCli(api, DEFAULT_CONFIG);
+    registerCli(api, DEFAULT_CONFIG, createDeps());
 
     const { program, commands } = createMockProgram();
     api._cliRegistrations[0].fn({ program });
@@ -138,21 +172,21 @@ describe("registerCli", () => {
     expect(names).toContain("doctor");
   });
 
-  it("verify command accepts receipt-hash argument", () => {
+  it("verify command accepts receipt-id argument", () => {
     const api = createMockApi();
-    registerCli(api, DEFAULT_CONFIG);
+    registerCli(api, DEFAULT_CONFIG, createDeps());
 
     const { program, commands } = createMockProgram();
     api._cliRegistrations[0].fn({ program });
 
     const verify = commands.find((c) => c.name === "verify");
     expect(verify).toBeDefined();
-    expect(verify!.argument).toBe("<receipt-hash>");
+    expect(verify!.argument).toBe("<receipt-id>");
   });
 
   it("audit command has --limit option", () => {
     const api = createMockApi();
-    registerCli(api, DEFAULT_CONFIG);
+    registerCli(api, DEFAULT_CONFIG, createDeps());
 
     const { program, commands } = createMockProgram();
     api._cliRegistrations[0].fn({ program });
@@ -162,9 +196,9 @@ describe("registerCli", () => {
     expect(audit!.options.some((o) => o.flags.includes("--limit"))).toBe(true);
   });
 
-  it("audit command uses POST method with limit in body", async () => {
+  it("audit command queries receipt store", async () => {
     const api = createMockApi();
-    registerCli(api, DEFAULT_CONFIG);
+    registerCli(api, DEFAULT_CONFIG, createDeps());
 
     const { program, commands } = createMockProgram();
     api._cliRegistrations[0].fn({ program });
@@ -173,17 +207,31 @@ describe("registerCli", () => {
     expect(audit).toBeDefined();
     expect(audit!.action).toBeDefined();
 
-    fetchMock.mockResolvedValueOnce(jsonResponse([]));
-
-    // Invoke the audit action with opts
+    mockStoreQuery.mockReturnValue([]);
     await audit!.action!({ limit: "50" });
 
-    expect(fetchMock).toHaveBeenCalledOnce();
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("http://127.0.0.1:18890/audit");
-    expect(init.method).toBe("POST");
-    expect(init.headers["Content-Type"]).toBe("application/json");
-    const body = JSON.parse(init.body as string);
-    expect(body.limit).toBe(50);
+    expect(mockStoreQuery).toHaveBeenCalledOnce();
+  });
+
+  it("doctor command checks hooks, constitution, and store", async () => {
+    const api = createMockApi();
+    registerCli(api, DEFAULT_CONFIG, createDeps());
+
+    const { program, commands } = createMockProgram();
+    api._cliRegistrations[0].fn({ program });
+
+    const doctor = commands.find((c) => c.name === "doctor");
+    expect(doctor).toBeDefined();
+    expect(doctor!.action).toBeDefined();
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await doctor!.action!();
+
+    const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("PASS");
+    expect(output).toContain("hooks.internal.enabled");
+    expect(output).toContain("constitution");
+    expect(output).toContain("receipt store");
+    consoleSpy.mockRestore();
   });
 });

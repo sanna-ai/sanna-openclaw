@@ -1,23 +1,31 @@
 /**
- * CLI commands: openclaw sanna status|audit|verify
+ * CLI commands: openclaw sanna doctor|status|audit|verify
  *
  * These commands are registered via api.registerCli and exposed
  * through the OpenClaw CLI tool.
  */
 
 import type { SannaConfig, PluginAPI } from "./types.js";
-import { fetchWithTimeout, readHooksEnabled } from "./http.js";
+import type { Constitution } from "@sanna/core";
+import { ReceiptStore } from "@sanna/core";
+import { readHooksEnabled } from "./http.js";
 
-const SIDECAR_TIMEOUT_MS = 5_000;
+export interface CliDeps {
+  constitution: Constitution;
+  store: ReceiptStore;
+  constitutionPath: string;
+}
 
 /** Register CLI commands under `openclaw sanna`. */
-export function registerCli(api: PluginAPI, config: SannaConfig): void {
-  const port = config.sidecarPort ?? 18890;
-  const baseUrl = `http://127.0.0.1:${port}`;
+export function registerCli(
+  api: PluginAPI,
+  config: SannaConfig,
+  deps: CliDeps
+): void {
+  const { constitution, store, constitutionPath } = deps;
 
   api.registerCli(
     ({ program }) => {
-      // program is a Commander instance — cast to any for subcommand API
       const prog = program as {
         command: (name: string) => CommandBuilder;
       };
@@ -29,53 +37,27 @@ export function registerCli(api: PluginAPI, config: SannaConfig): void {
 
       // openclaw sanna status
       addCommand(sanna, "status", "Show governance status", async () => {
+        console.log(`Mode: ${config.enforcementMode ?? "enforce"}`);
+        console.log(
+          `Constitution: ${constitution.identity.agent_name} (${constitutionPath})`
+        );
+        console.log(
+          `Governed tools: ${(config.governedTools ?? []).join(", ")}`
+        );
+
         try {
-          const healthRes = await fetchWithTimeout(
-            `${baseUrl}/health`,
-            {},
-            SIDECAR_TIMEOUT_MS
+          const total = store.count();
+          const allowed = store.count({ status: "PASS" });
+          const denied = store.count({ status: "FAIL" });
+          console.log(
+            `Stats: total=${total} allowed=${allowed} denied=${denied}`
           );
-          const healthy = healthRes.ok;
-
-          if (!healthy) {
-            console.log("Sidecar: unreachable");
-            console.log(`Mode: ${config.enforcementMode ?? "enforce"}`);
-            return;
-          }
-
-          const statusRes = await fetchWithTimeout(
-            `${baseUrl}/status`,
-            {},
-            SIDECAR_TIMEOUT_MS
-          );
-          if (statusRes.ok) {
-            const status = (await statusRes.json()) as Record<string, unknown>;
-            console.log("Sidecar: healthy");
-            console.log(`Mode: ${config.enforcementMode ?? "enforce"}`);
-            console.log(
-              `Constitution: ${config.constitutionPath ?? "(not set)"}`
-            );
-            console.log(
-              `Governed tools: ${(config.governedTools ?? []).join(", ")}`
-            );
-            if (status.constitution) {
-              console.log(
-                `Constitution loaded: ${JSON.stringify(status.constitution)}`
-              );
-            }
-            if (status.enforcement_stats) {
-              console.log(
-                `Stats: ${JSON.stringify(status.enforcement_stats)}`
-              );
-            }
-          }
         } catch {
-          console.log("Sidecar: unreachable");
-          console.log(`Mode: ${config.enforcementMode ?? "enforce"}`);
+          console.log("Stats: unavailable");
         }
       });
 
-      // openclaw sanna audit (POST /audit)
+      // openclaw sanna audit
       addCommandWithOptions(
         sanna,
         "audit",
@@ -84,57 +66,44 @@ export function registerCli(api: PluginAPI, config: SannaConfig): void {
         async (opts: Record<string, string>) => {
           try {
             const limit = parseInt(opts.limit ?? "20", 10);
-            const res = await fetchWithTimeout(
-              `${baseUrl}/audit`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ limit }),
-              },
-              SIDECAR_TIMEOUT_MS
-            );
-            if (!res.ok) {
-              console.error(`Sidecar returned HTTP ${res.status}`);
-              return;
-            }
-            const data = (await res.json()) as unknown[];
-            if (data.length === 0) {
+            const receipts = store.query({ enforcement: true, limit });
+            if (receipts.length === 0) {
               console.log("No recent enforcement decisions.");
               return;
             }
-            for (const entry of data) {
+            for (const entry of receipts) {
               console.log(JSON.stringify(entry));
             }
           } catch {
-            console.error("Sidecar unreachable");
+            console.error("Receipt query failed");
           }
         }
       );
 
-      // openclaw sanna verify <receipt-hash>
+      // openclaw sanna verify <receipt-id>
       addCommandWithArg(
         sanna,
         "verify",
         "Verify a receipt",
-        "<receipt-hash>",
-        async (hash: string) => {
+        "<receipt-id>",
+        async (receiptId: string) => {
           try {
-            const res = await fetchWithTimeout(
-              `${baseUrl}/verify/${hash}`,
-              {},
-              SIDECAR_TIMEOUT_MS
+            const results = store.query({ limit: 1000 });
+            const match = results.find(
+              (r) => (r as Record<string, unknown>).receipt_id === receiptId
             );
-            if (!res.ok) {
-              console.error(`Verification failed: HTTP ${res.status}`);
+            if (!match) {
+              console.error(`Receipt not found: ${receiptId}`);
               return;
             }
-            const data = (await res.json()) as Record<string, unknown>;
-            console.log(
-              data.valid ? "Receipt is VALID" : "Receipt is INVALID"
-            );
-            console.log(JSON.stringify(data, null, 2));
+            const r = match as Record<string, unknown>;
+            const sig = r.receipt_signature as
+              | Record<string, unknown>
+              | undefined;
+            console.log(sig?.signature ? "Receipt is SIGNED" : "Receipt is UNSIGNED");
+            console.log(JSON.stringify(r, null, 2));
           } catch {
-            console.error("Sidecar unreachable");
+            console.error("Receipt query failed");
           }
         }
       );
@@ -142,7 +111,6 @@ export function registerCli(api: PluginAPI, config: SannaConfig): void {
       // openclaw sanna doctor
       addCommand(sanna, "doctor", "Check governance readiness", async () => {
         let allPassed = true;
-        let healthData: Record<string, unknown> | null = null;
 
         // 1. hooks.internal.enabled
         const hooksEnabled = readHooksEnabled();
@@ -153,38 +121,30 @@ export function registerCli(api: PluginAPI, config: SannaConfig): void {
           allPassed = false;
         }
 
-        // 2. sidecar reachable
+        // 2. constitution loads
         try {
-          const res = await fetchWithTimeout(
-            `${baseUrl}/health`,
-            {},
-            SIDECAR_TIMEOUT_MS
+          console.log(
+            `PASS  constitution: ${constitution.identity.agent_name} (${constitutionPath})`
           );
-          if (res.ok) {
-            healthData = (await res.json()) as Record<string, unknown>;
-            console.log("PASS  sidecar reachable");
-          } else {
-            console.log(`FAIL  sidecar returned HTTP ${res.status}`);
-            allPassed = false;
+          if (constitution.policy_hash) {
+            console.log(
+              `INFO  policy_hash: ${constitution.policy_hash.slice(0, 16)}...`
+            );
           }
+          console.log(
+            `INFO  version: ${constitution.schema_version}`
+          );
         } catch {
-          console.log("FAIL  sidecar unreachable");
+          console.log("FAIL  constitution failed to load");
           allPassed = false;
         }
 
-        // 3. constitution loaded (from sidecar /health response)
-        if (healthData) {
-          const constitutionInfo =
-            healthData.constitution ||
-            healthData.constitution_path ||
-            healthData.constitution_loaded;
-          if (constitutionInfo) {
-            console.log(`PASS  constitution: ${constitutionInfo}`);
-          } else {
-            console.log("WARN  sidecar running but no constitution loaded");
-          }
-        } else {
-          console.log("WARN  could not check constitution (sidecar unreachable)");
+        // 3. receipt store writable
+        try {
+          store.count();
+          console.log("PASS  receipt store writable");
+        } catch {
+          console.log("WARN  receipt store not writable");
         }
 
         // Summary

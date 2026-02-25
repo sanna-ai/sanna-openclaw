@@ -43,9 +43,8 @@ export const GOVERNED_TOOLS_DEFAULT: string[] = [
 
 export const DEFAULT_CONFIG: Required<SannaConfig> = {
   constitutionPath: "",
-  gatewayPort: 18789,
-  gatewayToken: "",
-  sidecarPort: 18890,
+  privateKeyPath: "",
+  receiptStorePath: "",
   governedTools: GOVERNED_TOOLS_DEFAULT,
   enforcementMode: "enforce",
 };
@@ -60,9 +59,8 @@ export function resolveConfig(api: PluginAPI): SannaConfig {
 
   return {
     constitutionPath: raw.constitutionPath ?? DEFAULT_CONFIG.constitutionPath,
-    gatewayPort: raw.gatewayPort ?? DEFAULT_CONFIG.gatewayPort,
-    gatewayToken: raw.gatewayToken ?? DEFAULT_CONFIG.gatewayToken,
-    sidecarPort: raw.sidecarPort ?? DEFAULT_CONFIG.sidecarPort,
+    privateKeyPath: raw.privateKeyPath ?? DEFAULT_CONFIG.privateKeyPath,
+    receiptStorePath: raw.receiptStorePath ?? DEFAULT_CONFIG.receiptStorePath,
     governedTools: raw.governedTools ?? DEFAULT_CONFIG.governedTools,
     enforcementMode: raw.enforcementMode ?? DEFAULT_CONFIG.enforcementMode,
   };

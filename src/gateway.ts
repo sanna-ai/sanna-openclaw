@@ -1,90 +1,63 @@
 /**
  * Gateway RPC methods for operational visibility.
  *
- * sanna.status — current enforcement status, sidecar health, constitution info
- * sanna.audit  — recent enforcement decisions proxied from sidecar
+ * sanna.status — current enforcement status, constitution info, receipt stats
+ * sanna.audit  — recent enforcement receipts from ReceiptStore
  */
 
 import type { SannaConfig, PluginAPI } from "./types.js";
-import { fetchWithTimeout } from "./http.js";
+import type { Constitution } from "@sanna/core";
+import { ReceiptStore } from "@sanna/core";
 
-const SIDECAR_TIMEOUT_MS = 5_000;
+export interface GatewayDeps {
+  constitution: Constitution;
+  store: ReceiptStore;
+}
 
 /** Register sanna.status and sanna.audit Gateway RPC methods. */
 export function registerGatewayMethods(
   api: PluginAPI,
-  config: SannaConfig
+  config: SannaConfig,
+  deps: GatewayDeps
 ): void {
-  const port = config.sidecarPort ?? 18890;
-  const baseUrl = `http://127.0.0.1:${port}`;
+  const { constitution, store } = deps;
 
   // ---------------------------------------------------------------------------
   // sanna.status — enforcement status overview
   // ---------------------------------------------------------------------------
 
-  api.registerGatewayMethod("sanna.status", async ({ respond }) => {
+  api.registerGatewayMethod("sanna.status", ({ respond }) => {
+    const stats = { total: 0, allowed: 0, denied: 0, escalated: 0 };
     try {
-      // Check sidecar health
-      const healthRes = await fetchWithTimeout(
-        `${baseUrl}/health`,
-        {},
-        SIDECAR_TIMEOUT_MS
-      );
-      const healthy = healthRes.ok;
-
-      // Get status from sidecar
-      let status: Record<string, unknown> = {};
-      if (healthy) {
-        const statusRes = await fetchWithTimeout(
-          `${baseUrl}/status`,
-          {},
-          SIDECAR_TIMEOUT_MS
-        );
-        if (statusRes.ok) {
-          status = (await statusRes.json()) as Record<string, unknown>;
-        }
-      }
-
-      respond(true, {
-        mode: config.enforcementMode ?? "enforce",
-        sidecar: healthy ? "healthy" : "unreachable",
-        constitutionPath: config.constitutionPath ?? "",
-        governedTools: config.governedTools ?? [],
-        ...status,
-      });
+      stats.total = store.count();
+      stats.allowed = store.count({ status: "PASS" });
+      stats.denied = store.count({ status: "FAIL" });
     } catch {
-      respond(true, {
-        mode: config.enforcementMode ?? "enforce",
-        sidecar: "unreachable",
-        constitutionPath: config.constitutionPath ?? "",
-        governedTools: config.governedTools ?? [],
-      });
+      // best effort
     }
+
+    respond(true, {
+      mode: config.enforcementMode ?? "enforce",
+      constitution: {
+        name: constitution.identity.agent_name,
+        version: constitution.schema_version,
+        policy_hash: constitution.policy_hash ?? "",
+      },
+      governedTools: config.governedTools ?? [],
+      enforcement_stats: stats,
+    });
   });
 
   // ---------------------------------------------------------------------------
-  // sanna.audit — recent enforcement decisions (POST /audit)
+  // sanna.audit — recent enforcement receipts
   // ---------------------------------------------------------------------------
 
-  api.registerGatewayMethod("sanna.audit", async ({ respond }) => {
+  api.registerGatewayMethod("sanna.audit", ({ respond }) => {
     try {
-      const res = await fetchWithTimeout(
-        `${baseUrl}/audit`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ limit: 20 }),
-        },
-        SIDECAR_TIMEOUT_MS
-      );
-      if (!res.ok) {
-        respond(false, { error: `Sidecar returned HTTP ${res.status}` });
-        return;
-      }
-      const data = await res.json();
-      respond(true, data);
+      const receipts = store.query({ enforcement: true, limit: 20 });
+      respond(true, receipts);
     } catch {
-      respond(false, { error: "Sidecar unreachable" });
+      respond(false, { error: "Receipt query failed" });
     }
   });
 }

@@ -1,24 +1,10 @@
 /**
- * Shared HTTP utilities.
+ * Shared utilities for reading OpenClaw configuration.
  */
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-
-/** fetch with AbortController-based timeout. */
-export function fetchWithTimeout(
-  url: string,
-  init: RequestInit,
-  timeoutMs: number
-): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  return fetch(url, { ...init, signal: controller.signal }).finally(() =>
-    clearTimeout(timer)
-  );
-}
 
 /**
  * Read and cache ~/.openclaw/openclaw.json (parsed once).
@@ -36,30 +22,6 @@ function readOpenclawConfig(): Record<string, unknown> {
   }
 
   return _cachedOpenclawConfig!;
-}
-
-/**
- * Read the gateway auth token from ~/.openclaw/openclaw.json.
- * Returns empty string on any failure.
- */
-export function readGatewayToken(): string {
-  const raw = readOpenclawConfig() as Record<string, unknown>;
-  const gateway = raw?.gateway as Record<string, unknown> | undefined;
-  const auth = gateway?.auth as Record<string, unknown> | undefined;
-  return String(auth?.token ?? "");
-}
-
-/**
- * Read the workspace root from ~/.openclaw/openclaw.json.
- * Path: agents.defaults.workspace. Defaults to ~/.openclaw/workspace.
- */
-export function readWorkspaceRoot(): string {
-  const raw = readOpenclawConfig() as Record<string, unknown>;
-  const agents = raw?.agents as Record<string, unknown> | undefined;
-  const defaults = agents?.defaults as Record<string, unknown> | undefined;
-  const workspace = defaults?.workspace;
-  if (typeof workspace === "string" && workspace) return workspace;
-  return join(homedir(), ".openclaw", "workspace");
 }
 
 /**
