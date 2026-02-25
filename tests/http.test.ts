@@ -1,11 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fetchWithTimeout } from "../src/http.js";
+
+// Mock node:fs before importing http module
+const mockReadFileSync = vi.fn();
+vi.mock("node:fs", () => ({
+  readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
+}));
+
+import { fetchWithTimeout, readGatewayToken } from "../src/http.js";
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
+  vi.clearAllMocks();
 });
 
 afterEach(() => {
@@ -70,5 +78,45 @@ describe("fetchWithTimeout", () => {
 
     expect(clearSpy).toHaveBeenCalled();
     clearSpy.mockRestore();
+  });
+});
+
+describe("readGatewayToken", () => {
+  it("reads token from openclaw.json gateway.auth.token", async () => {
+    // Reset cached token by re-importing with fresh module
+    // Since the cache is module-level, we test via the mock behavior
+    mockReadFileSync.mockReturnValueOnce(
+      JSON.stringify({ gateway: { auth: { token: "my-secret-token" } } })
+    );
+
+    // Force fresh import to reset cache
+    const mod = await import("../src/http.js?" + Date.now());
+    const token = mod.readGatewayToken();
+
+    expect(token).toBe("my-secret-token");
+    expect(mockReadFileSync).toHaveBeenCalledWith(
+      expect.stringContaining("openclaw.json"),
+      "utf-8"
+    );
+  });
+
+  it("returns empty string when file does not exist", async () => {
+    mockReadFileSync.mockImplementationOnce(() => {
+      throw new Error("ENOENT");
+    });
+
+    const mod = await import("../src/http.js?" + Date.now());
+    const token = mod.readGatewayToken();
+
+    expect(token).toBe("");
+  });
+
+  it("returns empty string when token path is missing", async () => {
+    mockReadFileSync.mockReturnValueOnce(JSON.stringify({ gateway: {} }));
+
+    const mod = await import("../src/http.js?" + Date.now());
+    const token = mod.readGatewayToken();
+
+    expect(token).toBe("");
   });
 });

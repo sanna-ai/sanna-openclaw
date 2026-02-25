@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { SannaConfig, EnforceResponse } from "../src/types.js";
+
+// Mock readGatewayToken so tests don't depend on ~/.openclaw/openclaw.json
+const mockReadGatewayToken = vi.fn(() => "");
+vi.mock("../src/http.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/http.js")>();
+  return { ...actual, readGatewayToken: () => mockReadGatewayToken() };
+});
+
 import { enforce, forward, enforceAndForward } from "../src/enforce.js";
 
 // ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ import type {
   ToolInvokeRequest,
   ToolResult,
 } from "./types.js";
-import { fetchWithTimeout } from "./http.js";
+import { fetchWithTimeout, readGatewayToken } from "./http.js";
 
 const SIDECAR_TIMEOUT_MS = 5_000;
 const GATEWAY_TIMEOUT_MS = 30_000;
@@ -82,11 +82,12 @@ export async function forward(
   const body: ToolInvokeRequest = { tool, args };
   if (action !== undefined) body.action = action;
 
+  const token = config.gatewayToken || readGatewayToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  if (config.gatewayToken) {
-    headers["Authorization"] = `Bearer ${config.gatewayToken}`;
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
   }
 
   const res = await fetchWithTimeout(url, {

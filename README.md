@@ -42,6 +42,8 @@ openclaw restart
 /sanna
 ```
 
+The plugin reads the gateway auth token automatically from `~/.openclaw/openclaw.json` (`gateway.auth.token`) — no manual token configuration needed.
+
 See [docs/SETUP.md](docs/SETUP.md) for detailed installation steps.
 
 ## Governed Tools
