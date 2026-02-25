@@ -123,7 +123,7 @@ describe("registerCli", () => {
     expect(api._cliRegistrations[0].opts.commands).toEqual(["sanna"]);
   });
 
-  it("creates sanna parent command with status, audit, verify subcommands", () => {
+  it("creates sanna parent command with status, audit, verify, doctor subcommands", () => {
     const api = createMockApi();
     registerCli(api, DEFAULT_CONFIG);
 
@@ -135,6 +135,7 @@ describe("registerCli", () => {
     expect(names).toContain("status");
     expect(names).toContain("audit");
     expect(names).toContain("verify");
+    expect(names).toContain("doctor");
   });
 
   it("verify command accepts receipt-hash argument", () => {

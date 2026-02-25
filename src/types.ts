@@ -38,18 +38,6 @@ export interface EnforceResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Gateway forwarding
-// ---------------------------------------------------------------------------
-
-/** POST /tools/invoke request body */
-export interface ToolInvokeRequest {
-  tool: string;
-  args: Record<string, unknown>;
-  action?: string;
-  sessionKey?: string;
-}
-
-// ---------------------------------------------------------------------------
 // OpenClaw tool result format
 // ---------------------------------------------------------------------------
 

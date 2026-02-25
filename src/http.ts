@@ -61,3 +61,14 @@ export function readWorkspaceRoot(): string {
   if (typeof workspace === "string" && workspace) return workspace;
   return join(homedir(), ".openclaw", "workspace");
 }
+
+/**
+ * Check if hooks.internal.enabled is true in ~/.openclaw/openclaw.json.
+ * Returns true only when explicitly set to true.
+ */
+export function readHooksEnabled(): boolean {
+  const raw = readOpenclawConfig() as Record<string, unknown>;
+  const hooks = raw?.hooks as Record<string, unknown> | undefined;
+  const internal = hooks?.internal as Record<string, unknown> | undefined;
+  return internal?.enabled === true;
+}

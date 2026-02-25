@@ -6,7 +6,8 @@
  */
 
 import type { SannaConfig, PluginAPI } from "./types.js";
-import { fetchWithTimeout } from "./http.js";
+import { fetchWithTimeout, readHooksEnabled } from "./http.js";
+import { existsSync } from "node:fs";
 
 const SIDECAR_TIMEOUT_MS = 5_000;
 
@@ -138,6 +139,56 @@ export function registerCli(api: PluginAPI, config: SannaConfig): void {
           }
         }
       );
+
+      // openclaw sanna doctor
+      addCommand(sanna, "doctor", "Check governance readiness", async () => {
+        let allPassed = true;
+
+        // 1. hooks.internal.enabled
+        const hooksEnabled = readHooksEnabled();
+        if (hooksEnabled) {
+          console.log("PASS  hooks.internal.enabled = true");
+        } else {
+          console.log("FAIL  hooks.internal.enabled is not set");
+          allPassed = false;
+        }
+
+        // 2. sidecar reachable
+        try {
+          const res = await fetchWithTimeout(
+            `${baseUrl}/health`,
+            {},
+            SIDECAR_TIMEOUT_MS
+          );
+          if (res.ok) {
+            console.log("PASS  sidecar reachable");
+          } else {
+            console.log(`FAIL  sidecar returned HTTP ${res.status}`);
+            allPassed = false;
+          }
+        } catch {
+          console.log("FAIL  sidecar unreachable");
+          allPassed = false;
+        }
+
+        // 3. constitution exists
+        const constitutionPath = config.constitutionPath;
+        if (constitutionPath && existsSync(constitutionPath)) {
+          console.log(`PASS  constitution exists: ${constitutionPath}`);
+        } else if (constitutionPath) {
+          console.log(`FAIL  constitution not found: ${constitutionPath}`);
+          allPassed = false;
+        } else {
+          console.log("WARN  no constitutionPath configured");
+        }
+
+        // Summary
+        console.log(
+          allPassed
+            ? "\nGovernance is ready."
+            : "\nGovernance has issues. Fix the FAIL items above."
+        );
+      });
     },
     { commands: ["sanna"] }
   );
