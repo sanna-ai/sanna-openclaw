@@ -2,12 +2,14 @@
 FastAPI server wrapping the sanna library for governance evaluation.
 
 Fail-closed: /enforce returns halt when no constitution is loaded or on any error.
+Write-ahead: every receipt is persisted to disk BEFORE the enforce response is returned.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -16,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger("sanna.sidecar")
@@ -102,6 +105,7 @@ class AuditResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str  # ok | degraded | error
     version: str
+    receipt_store: str = ""
 
 
 class StatusResponse(BaseModel):
@@ -144,6 +148,17 @@ def create_app(
     store: ReceiptStore | None = None
     stats: dict[str, int] = {"total": 0, "allowed": 0, "halted": 0, "escalated": 0}
 
+    # 0. Receipt store directory (write-ahead persistence)
+    receipt_store_dir = os.environ.get("SANNA_RECEIPT_STORE", "")
+    if not receipt_store_dir:
+        receipt_store_dir = str(Path.home() / ".sanna" / "receipts" / "openclaw")
+    try:
+        os.makedirs(receipt_store_dir, mode=0o700, exist_ok=True)
+        logger.info("Receipt store directory: %s", receipt_store_dir)
+    except Exception:
+        logger.exception("Failed to create receipt store directory: %s", receipt_store_dir)
+        # Will cause 500 on enforce — fail-closed by design
+
     # 1. Load constitution
     if SANNA_AVAILABLE and constitution_path:
         try:
@@ -181,7 +196,7 @@ def create_app(
         logger.warning("Signing key not found at %s — receipts will be unsigned", signing_key_path)
         signing_key_path = ""
 
-    # 3. Initialise receipt store
+    # 3. Initialise receipt store (SQLite — for queries, stats, etc.)
     if SANNA_AVAILABLE:
         try:
             if receipt_store_path:
@@ -240,8 +255,8 @@ def create_app(
             "status": "PASS" if verdict == "allow" else "FAIL",
         }
 
-    def _sign_and_store(receipt: dict[str, Any]) -> dict[str, Any]:
-        """Sign a receipt (if key loaded) and store it."""
+    def _sign_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
+        """Sign a receipt (if key loaded)."""
         if signing_key_path:
             try:
                 receipt = sign_receipt(receipt, signing_key_path, signed_by="sanna-openclaw")
@@ -250,14 +265,31 @@ def create_app(
                 receipt["_unsigned_warning"] = "signing failed"
         else:
             receipt["_unsigned_warning"] = "no signing key configured"
+        return receipt
 
+    def _persist_receipt_to_disk(receipt: dict[str, Any]) -> None:
+        """Atomic write-ahead: write receipt JSON to disk.
+
+        Writes to a .tmp file then os.replace() for POSIX atomicity.
+        Raises on any failure — caller must handle.
+        """
+        receipt_id = receipt["receipt_id"]
+        target = os.path.join(receipt_store_dir, f"{receipt_id}.json")
+        tmp = target + ".tmp"
+        data = json.dumps(receipt, sort_keys=True, indent=2)
+        with open(tmp, "w") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, target)
+
+    def _store_receipt_to_db(receipt: dict[str, Any]) -> None:
+        """Best-effort store to SQLite (for queries). Non-fatal."""
         if store is not None:
             try:
                 store.save(receipt)
             except Exception:
-                logger.exception("Failed to store receipt %s", receipt.get("receipt_id"))
-
-        return receipt
+                logger.exception("Failed to store receipt %s to DB", receipt.get("receipt_id"))
 
     def _inc_stat(key: str) -> None:
         """Increment an in-memory stat and persist to DB."""
@@ -296,13 +328,20 @@ def create_app(
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
         status = "ok" if SANNA_AVAILABLE else "degraded"
-        return HealthResponse(status=status, version=SANNA_VERSION)
+        return HealthResponse(
+            status=status,
+            version=SANNA_VERSION,
+            receipt_store=receipt_store_dir,
+        )
 
     # -----------------------------------------------------------------------
     # POST /enforce — evaluate authority boundaries, generate signed receipt
+    #
+    # Write-ahead: receipt is persisted to disk BEFORE the response.
+    # If persistence fails → HTTP 500, action never executes.
     # -----------------------------------------------------------------------
     @app.post("/enforce", response_model=EnforceResponse)
-    async def enforce(request: EnforceRequest) -> EnforceResponse:
+    async def enforce(request: EnforceRequest) -> EnforceResponse | JSONResponse:
         _inc_stat("total")
 
         # Fail-closed: no sanna library
@@ -345,7 +384,26 @@ def create_app(
             boundary_type=decision.boundary_type,
             context=context_dict,
         )
-        receipt = _sign_and_store(receipt)
+        receipt = _sign_receipt(receipt)
+
+        # ---- Write-ahead: persist receipt to disk BEFORE returning ----
+        try:
+            _persist_receipt_to_disk(receipt)
+        except Exception:
+            logger.exception(
+                "CRITICAL: Receipt persistence failed for %s — blocking action",
+                receipt.get("receipt_id"),
+            )
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "verdict": "error",
+                    "reason": "Receipt persistence failed — action blocked",
+                },
+            )
+
+        # Best-effort store to SQLite (for queries)
+        _store_receipt_to_db(receipt)
 
         # Build failed_checks for non-allow verdicts
         failed_checks: list[FailedCheck] = []
@@ -396,7 +454,15 @@ def create_app(
         receipt["execution_result"] = request.result
         receipt["execution_error"] = request.error
 
-        receipt = _sign_and_store(receipt)
+        receipt = _sign_receipt(receipt)
+
+        # Write-ahead for audit receipts too
+        try:
+            _persist_receipt_to_disk(receipt)
+        except Exception:
+            logger.exception("Failed to persist audit receipt %s", receipt.get("receipt_id"))
+
+        _store_receipt_to_db(receipt)
         return AuditResponse(receipt_id=receipt["receipt_id"])
 
     # -----------------------------------------------------------------------
