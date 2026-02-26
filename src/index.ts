@@ -16,7 +16,12 @@ import type { KeyObject } from "node:crypto";
 import type { PluginAPI } from "./types.js";
 import { resolveConfig } from "./config.js";
 import { readHooksEnabled } from "./http.js";
-import { loadConstitution, loadPrivateKey, ReceiptStore } from "@sanna-ai/core";
+import {
+  loadConstitution,
+  loadPrivateKey,
+  loadPublicKey,
+  ReceiptStore,
+} from "@sanna-ai/core";
 import type { Constitution } from "@sanna-ai/core";
 import { registerHooks } from "./hooks.js";
 import { registerGatewayMethods } from "./gateway.js";
@@ -144,11 +149,28 @@ export default function register(api: PluginAPI): void {
     }
   }
 
+  // Load public key (optional, used for receipt verification)
+  let publicKey: KeyObject | null = null;
+  if (config.publicKeyPath && existsSync(config.publicKeyPath)) {
+    try {
+      publicKey = loadPublicKey(config.publicKeyPath);
+      api.logger.info("[sanna] Verification key loaded.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      api.logger.warn(`[sanna] Failed to load verification key: ${msg}`);
+    }
+  }
+
   api.logger.info(
     `[sanna] Governance plugin loaded. Mode: ${config.enforcementMode}`
   );
 
   registerHooks(api, config, { constitution, store, privateKey });
   registerGatewayMethods(api, config, { constitution, store });
-  registerCli(api, config, { constitution, store, constitutionPath });
+  registerCli(api, config, {
+    constitution,
+    store,
+    constitutionPath,
+    publicKey,
+  });
 }

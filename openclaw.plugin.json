@@ -15,6 +15,10 @@
         "type": "string",
         "description": "Path to Ed25519 private key PEM for receipt signing"
       },
+      "publicKeyPath": {
+        "type": "string",
+        "description": "Path to Ed25519 public key PEM for receipt and constitution verification"
+      },
       "receiptStorePath": {
         "type": "string",
         "description": "Path to SQLite receipt store database"

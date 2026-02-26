@@ -44,6 +44,7 @@ export const GOVERNED_TOOLS_DEFAULT: string[] = [
 export const DEFAULT_CONFIG: Required<SannaConfig> = {
   constitutionPath: "",
   privateKeyPath: "",
+  publicKeyPath: "",
   receiptStorePath: "",
   governedTools: GOVERNED_TOOLS_DEFAULT,
   enforcementMode: "enforce",
@@ -60,6 +61,7 @@ export function resolveConfig(api: PluginAPI): SannaConfig {
   return {
     constitutionPath: raw.constitutionPath ?? DEFAULT_CONFIG.constitutionPath,
     privateKeyPath: raw.privateKeyPath ?? DEFAULT_CONFIG.privateKeyPath,
+    publicKeyPath: raw.publicKeyPath ?? DEFAULT_CONFIG.publicKeyPath,
     receiptStorePath: raw.receiptStorePath ?? DEFAULT_CONFIG.receiptStorePath,
     governedTools: raw.governedTools ?? DEFAULT_CONFIG.governedTools,
     enforcementMode: raw.enforcementMode ?? DEFAULT_CONFIG.enforcementMode,

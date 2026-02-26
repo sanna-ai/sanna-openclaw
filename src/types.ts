@@ -9,6 +9,7 @@
 export interface SannaConfig {
   constitutionPath?: string;
   privateKeyPath?: string;
+  publicKeyPath?: string;
   receiptStorePath?: string;
   governedTools?: string[];
   enforcementMode?: "enforce" | "audit" | "passthrough";

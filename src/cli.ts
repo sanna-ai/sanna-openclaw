@@ -7,13 +7,15 @@
 
 import type { SannaConfig, PluginAPI } from "./types.js";
 import type { Constitution } from "@sanna-ai/core";
-import { ReceiptStore } from "@sanna-ai/core";
+import { ReceiptStore, verifyReceipt } from "@sanna-ai/core";
 import { readHooksEnabled } from "./http.js";
+import type { KeyObject } from "node:crypto";
 
 export interface CliDeps {
   constitution: Constitution;
   store: ReceiptStore;
   constitutionPath: string;
+  publicKey: KeyObject | null;
 }
 
 /** Register CLI commands under `openclaw sanna`. */
@@ -22,7 +24,7 @@ export function registerCli(
   config: SannaConfig,
   deps: CliDeps
 ): void {
-  const { constitution, store, constitutionPath } = deps;
+  const { constitution, store, constitutionPath, publicKey } = deps;
 
   api.registerCli(
     ({ program }) => {
@@ -89,12 +91,16 @@ export function registerCli(
       );
 
       // openclaw sanna verify <receipt-id>
-      addCommandWithArg(
+      addCommandWithArgAndOptions(
         sanna,
         "verify",
         "Verify a receipt",
         "<receipt-id>",
-        async (receiptId: string) => {
+        {
+          "--strict": "Enable strict verification (all checks evaluated)",
+          "--json": "Output verification result as JSON",
+        },
+        async (receiptId: string, opts: Record<string, string>) => {
           try {
             const results = store.query({ limit: 1000 });
             const match = results.find(
@@ -104,12 +110,128 @@ export function registerCli(
               console.error(`Receipt not found: ${receiptId}`);
               return;
             }
-            const r = match as Record<string, unknown>;
-            const sig = r.receipt_signature as
+            const receipt = match as Record<string, unknown>;
+            const vResult = verifyReceipt(
+              receipt,
+              publicKey ?? undefined
+            );
+
+            // Strict mode: verify all receipt checks were evaluated
+            let strictPass = true;
+            let strictDetail = "";
+            if (opts.strict) {
+              const checks = (receipt.checks ?? []) as Array<
+                Record<string, unknown>
+              >;
+              const allEvaluated =
+                checks.length > 0 &&
+                checks.every(
+                  (c) => c.status === "PASS" || c.status === "FAIL"
+                );
+              strictPass = allEvaluated;
+              strictDetail = allEvaluated
+                ? "all checks evaluated"
+                : checks.length === 0
+                  ? "no checks in receipt"
+                  : "unevaluated checks found";
+            }
+
+            if (opts.json) {
+              const jsonOut = {
+                ...vResult,
+                strict: opts.strict
+                  ? { passed: strictPass, detail: strictDetail }
+                  : undefined,
+              };
+              console.log(JSON.stringify(jsonOut, null, 2));
+              return;
+            }
+
+            // Formatted output
+            const stageMap: Record<string, string> = {
+              schema: "Stage 1 — Schema",
+              content_hashes: "Stage 2 — Integrity",
+              fingerprint: "Stage 3 — Fingerprint",
+            };
+
+            console.log(`Receipt: ${receiptId}`);
+
+            for (const [checkKey, label] of Object.entries(stageMap)) {
+              const performed = vResult.checks_performed.includes(checkKey);
+              if (!performed) {
+                console.log(`${label}:`.padEnd(30) + "SKIP");
+                continue;
+              }
+              const failed = vResult.errors.find((e) =>
+                e.toLowerCase().includes(checkKey.replace("_", " "))
+              );
+              if (failed) {
+                console.log(
+                  `${label}:`.padEnd(30) +
+                    `${ANSI.red}FAIL${ANSI.reset} (${failed})`
+                );
+              } else {
+                console.log(
+                  `${label}:`.padEnd(30) + `${ANSI.green}PASS${ANSI.reset}`
+                );
+              }
+            }
+
+            // Signature stage
+            const sig = receipt.receipt_signature as
               | Record<string, unknown>
               | undefined;
-            console.log(sig?.signature ? "Receipt is SIGNED" : "Receipt is UNSIGNED");
-            console.log(JSON.stringify(r, null, 2));
+            if (!publicKey) {
+              console.log("Stage 4 — Signature:".padEnd(30) + "SKIP");
+            } else if (!sig?.signature) {
+              console.log(
+                "Stage 4 — Signature:".padEnd(30) +
+                  `${ANSI.red}FAIL${ANSI.reset} (unsigned receipt)`
+              );
+            } else {
+              const sigError = vResult.errors.find((e) =>
+                e.toLowerCase().includes("signature")
+              );
+              if (sigError) {
+                console.log(
+                  "Stage 4 — Signature:".padEnd(30) +
+                    `${ANSI.red}FAIL${ANSI.reset} (${sigError})`
+                );
+              } else {
+                const keyId = (sig.key_id as string) ?? "unknown";
+                console.log(
+                  "Stage 4 — Signature:".padEnd(30) +
+                    `${ANSI.green}PASS${ANSI.reset} (signer: ${keyId})`
+                );
+              }
+            }
+
+            // Strict stage
+            if (opts.strict) {
+              if (strictPass) {
+                console.log(
+                  "Stage 5 — Strict:".padEnd(30) +
+                    `${ANSI.green}PASS${ANSI.reset} (${strictDetail})`
+                );
+              } else {
+                console.log(
+                  "Stage 5 — Strict:".padEnd(30) +
+                    `${ANSI.red}FAIL${ANSI.reset} (${strictDetail})`
+                );
+              }
+            }
+
+            // Overall verdict
+            const overallPass = vResult.valid && (!opts.strict || strictPass);
+            if (overallPass) {
+              console.log(
+                `Overall: ${ANSI.green}${ANSI.bold}VERIFIED${ANSI.reset}`
+              );
+            } else {
+              console.log(
+                `Overall: ${ANSI.red}${ANSI.bold}FAILED${ANSI.reset}`
+              );
+            }
           } catch {
             console.error("Receipt query failed");
           }
@@ -153,6 +275,23 @@ export function registerCli(
           console.log("PASS  receipt store writable");
         } catch {
           console.log("WARN  receipt store not writable");
+        }
+
+        // 4. public key
+        if (config.publicKeyPath) {
+          if (publicKey) {
+            console.log("PASS  public key loaded");
+          } else {
+            console.log(
+              `FAIL  public key not found: ${config.publicKeyPath}`
+            );
+            allPassed = false;
+          }
+        }
+
+        // 5. signing + verification combo
+        if (deps.publicKey && config.privateKeyPath) {
+          console.log("INFO  signing + verification keys configured");
         }
 
         // Summary
@@ -367,4 +506,19 @@ function addCommandWithArg(
     .description(desc)
     .argument(arg)
     .action(fn as (...args: unknown[]) => Promise<void>);
+}
+
+function addCommandWithArgAndOptions(
+  parent: CommandBuilder,
+  name: string,
+  desc: string,
+  arg: string,
+  options: Record<string, string>,
+  fn: (value: string, opts: Record<string, string>) => Promise<void>
+): void {
+  let cmd = parent.command(name).description(desc).argument(arg);
+  for (const [flags, optDesc] of Object.entries(options)) {
+    cmd = cmd.option(flags, optDesc);
+  }
+  cmd.action(fn as (...args: unknown[]) => Promise<void>);
 }
