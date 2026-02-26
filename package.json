@@ -34,7 +34,11 @@
   "author": "",
   "license": "AGPL-3.0-only",
   "peerDependencies": {
-    "openclaw": ">=2026.1.26"
+    "openclaw": ">=2026.1.26",
+    "@opentelemetry/api": ">=1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@opentelemetry/api": { "optional": true }
   },
   "devDependencies": {
     "@sinclair/typebox": "^0.32.35",

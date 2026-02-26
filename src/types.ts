@@ -13,6 +13,8 @@ export interface SannaConfig {
   receiptStorePath?: string;
   governedTools?: string[];
   enforcementMode?: "enforce" | "audit" | "passthrough";
+  otelExport?: boolean;
+  otelServiceName?: string;
 }
 
 // ---------------------------------------------------------------------------

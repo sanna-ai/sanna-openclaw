@@ -25,10 +25,15 @@ import {
 } from "@sanna-ai/core";
 import type { KeyObject } from "node:crypto";
 
+export interface OtelExporter {
+  exportReceipt(receipt: Record<string, unknown>): void;
+}
+
 export interface HookDeps {
   constitution: Constitution;
   store: ReceiptStore;
   privateKey: KeyObject | null;
+  otelExporter?: OtelExporter | null;
 }
 
 export function registerHooks(
@@ -168,6 +173,15 @@ export function registerHooks(
 
         // Write-ahead: persist BEFORE returning verdict
         store.save(receipt);
+
+        // Fire-and-forget OTel export after successful persistence
+        if (deps.otelExporter) {
+          try {
+            deps.otelExporter.exportReceipt(receipt);
+          } catch {
+            // Best effort — OTel export must never block enforcement
+          }
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         api.logger.error(

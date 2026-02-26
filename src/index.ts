@@ -21,9 +21,11 @@ import {
   loadPrivateKey,
   loadPublicKey,
   ReceiptStore,
+  SannaSpanExporter,
 } from "@sanna-ai/core";
 import type { Constitution } from "@sanna-ai/core";
 import { registerHooks } from "./hooks.js";
+import type { OtelExporter } from "./hooks.js";
 import { registerGatewayMethods } from "./gateway.js";
 import { registerCli } from "./cli.js";
 
@@ -161,11 +163,32 @@ export default function register(api: PluginAPI): void {
     }
   }
 
+  // Initialize OTel exporter (optional)
+  let otelExporter: OtelExporter | null = null;
+  if (config.otelExport) {
+    try {
+      // Dynamic import — @opentelemetry/api is an optional peer dependency
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const otelApi = require("@opentelemetry/api") as {
+        trace: { getTracer: (name: string) => unknown };
+      };
+      const tracer = otelApi.trace.getTracer(
+        config.otelServiceName ?? "sanna-openclaw"
+      ) as ConstructorParameters<typeof SannaSpanExporter>[0];
+      otelExporter = new SannaSpanExporter(tracer);
+      api.logger.info("[sanna] OpenTelemetry span export enabled.");
+    } catch {
+      api.logger.warn(
+        "[sanna] otelExport enabled but @opentelemetry/api not available. Install it as a dependency."
+      );
+    }
+  }
+
   api.logger.info(
     `[sanna] Governance plugin loaded. Mode: ${config.enforcementMode}`
   );
 
-  registerHooks(api, config, { constitution, store, privateKey });
+  registerHooks(api, config, { constitution, store, privateKey, otelExporter });
   registerGatewayMethods(api, config, { constitution, store });
   registerCli(api, config, {
     constitution,

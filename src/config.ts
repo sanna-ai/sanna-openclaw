@@ -48,6 +48,8 @@ export const DEFAULT_CONFIG: Required<SannaConfig> = {
   receiptStorePath: "",
   governedTools: GOVERNED_TOOLS_DEFAULT,
   enforcementMode: "enforce",
+  otelExport: false,
+  otelServiceName: "sanna-openclaw",
 };
 
 // ---------------------------------------------------------------------------
@@ -65,5 +67,7 @@ export function resolveConfig(api: PluginAPI): SannaConfig {
     receiptStorePath: raw.receiptStorePath ?? DEFAULT_CONFIG.receiptStorePath,
     governedTools: raw.governedTools ?? DEFAULT_CONFIG.governedTools,
     enforcementMode: raw.enforcementMode ?? DEFAULT_CONFIG.enforcementMode,
+    otelExport: raw.otelExport ?? DEFAULT_CONFIG.otelExport,
+    otelServiceName: raw.otelServiceName ?? DEFAULT_CONFIG.otelServiceName,
   };
 }

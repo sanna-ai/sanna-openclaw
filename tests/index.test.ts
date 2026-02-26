@@ -20,6 +20,8 @@ const mockReceiptStoreInstance = { save: vi.fn(), count: vi.fn(), query: vi.fn()
 vi.mock("@sanna-ai/core", () => ({
   loadConstitution: (...args: unknown[]) => mockLoadConstitution(...args),
   loadPrivateKey: (...args: unknown[]) => mockLoadPrivateKey(...args),
+  loadPublicKey: vi.fn(),
+  SannaSpanExporter: vi.fn(),
   ReceiptStore: vi.fn(() => mockReceiptStoreInstance),
 }));
 
@@ -142,5 +144,17 @@ describe("register — constitution loading", () => {
     expect(api.logger.warn).toHaveBeenCalledWith(
       expect.stringContaining("invalid YAML")
     );
+  });
+});
+
+describe("register — otel config", () => {
+  it("otelExport config defaults to false", () => {
+    const api = createMockApi();
+    // resolveConfig is called inside register; verify no OTel log
+    expect(() => register(api)).not.toThrow();
+    // Should not log OTel enabled (default is false)
+    const infoCalls = (api.logger.info as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => c[0] as string);
+    expect(infoCalls.some((s) => s.includes("OpenTelemetry"))).toBe(false);
   });
 });

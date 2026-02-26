@@ -679,6 +679,105 @@ describe("checks and evaluation_coverage", () => {
 });
 
 // ---------------------------------------------------------------------------
+// otelExporter
+// ---------------------------------------------------------------------------
+
+describe("otelExporter", () => {
+  it("otelExporter.exportReceipt called after receipt save", async () => {
+    const mockExportReceipt = vi.fn();
+    const api = createMockApi();
+    registerHooks(
+      api,
+      ENFORCE_CONFIG,
+      createDeps({ otelExporter: { exportReceipt: mockExportReceipt } })
+    );
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook({ toolName: "exec", params: {} }, { toolName: "exec" });
+
+    expect(mockExportReceipt).toHaveBeenCalledOnce();
+    expect(mockExportReceipt).toHaveBeenCalledWith({ receipt_id: "r-mock-123" });
+  });
+
+  it("otelExporter error does not block enforcement", async () => {
+    const mockExportReceipt = vi.fn(() => {
+      throw new Error("OTel export failed");
+    });
+    const api = createMockApi();
+    registerHooks(
+      api,
+      ENFORCE_CONFIG,
+      createDeps({ otelExporter: { exportReceipt: mockExportReceipt } })
+    );
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = await hook(
+      { toolName: "exec", params: {} },
+      { toolName: "exec" }
+    );
+
+    expect(result).toEqual({ blocked: false });
+    expect(mockExportReceipt).toHaveBeenCalledOnce();
+  });
+
+  it("no otelExporter is fine", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = await hook(
+      { toolName: "exec", params: {} },
+      { toolName: "exec" }
+    );
+
+    expect(result).toEqual({ blocked: false });
+  });
+
+  it("otelExporter not called when receipt save fails", async () => {
+    const mockExportReceipt = vi.fn();
+    const failingSave = vi.fn(() => {
+      throw new Error("DB write failed");
+    });
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, {
+      constitution: mockConstitution() as HookDeps["constitution"],
+      store: { save: failingSave } as unknown as HookDeps["store"],
+      privateKey: null,
+      otelExporter: { exportReceipt: mockExportReceipt },
+    });
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook({ toolName: "exec", params: {} }, { toolName: "exec" });
+
+    expect(mockExportReceipt).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // after_tool_call — observability
 // ---------------------------------------------------------------------------
 

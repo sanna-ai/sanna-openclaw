@@ -32,6 +32,16 @@
         "type": "string",
         "enum": ["enforce", "audit", "passthrough"],
         "default": "enforce"
+      },
+      "otelExport": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable OpenTelemetry span export for governance receipts"
+      },
+      "otelServiceName": {
+        "type": "string",
+        "default": "sanna-openclaw",
+        "description": "OpenTelemetry service name for exported spans"
       }
     }
   },
