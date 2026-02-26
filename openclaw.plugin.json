@@ -1,7 +1,7 @@
 {
   "id": "sanna",
   "name": "Sanna Governance",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Constitution enforcement and cryptographic receipts for OpenClaw agent tool execution",
   "configSchema": {
     "type": "object",

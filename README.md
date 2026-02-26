@@ -14,10 +14,12 @@ sanna is an OpenClaw Gateway plugin that enforces governance constitutions on AI
  │           │─ tool call ─>│  before_tool_call hook (sanna)      │
  │           │              │                                     │
  │           │              │  1. evaluateAuthority(tool, params)  │
- │           │              │     via @sanna-ai/core (in-process)     │
- │           │              │  2. generateReceipt() + signReceipt()│
- │           │              │  3. ReceiptStore.save() (write-ahead)│
- │           │              │  4. Return allow / block to Gateway  │
+ │           │              │     via @sanna-ai/core (in-process)  │
+ │           │              │  2. Run invariant checks             │
+ │           │              │  3. generateReceipt() + signReceipt()│
+ │           │              │  4. ReceiptStore.save() (write-ahead)│
+ │           │              │  5. OTel span export (optional)      │
+ │           │              │  6. Return allow / block to Gateway  │
  │           │<─ result ────│                                     │
  └──────────┘              │  after_tool_call (observability)     │
                            └─────────────────────────────────────┘
@@ -35,7 +37,7 @@ npm run build
 
 # Pack and install
 npm pack
-openclaw plugins install sanna-0.1.0.tgz
+openclaw plugins install sanna-0.2.0.tgz
 
 # Ensure hooks are enabled in ~/.openclaw/openclaw.json
 # hooks.internal.enabled must be true for governance to fire
@@ -63,6 +65,17 @@ All tool calls pass through the `before_tool_call` hook. The default governed to
 
 Tier 4 tools (`read`, `image`, `canvas`, `sessions_list`, `sessions_history`, `session_status`, `memory_search`, `memory_get`, `agents_list`) are not governed by default.
 
+## Enforcement Layers
+
+Each tool call is evaluated through multiple layers:
+
+1. **Authority evaluation** — `evaluateAuthority()` checks tool name and parameters against the constitution's `authority_boundaries` (cannot_execute, must_escalate, can_execute)
+2. **Invariant checks** — `runAllInvariantChecks()` evaluates constitution invariants against the action context
+3. **LLM semantic checks** (optional) — AI-powered invariant evaluation via `enableLlmChecks()`
+4. **Custom evaluators** (optional) — user-defined evaluator modules loaded at startup
+
+Results from all layers are collected as `CheckResult[]` in the receipt, with `evaluation_coverage` tracking which checks ran and passed.
+
 ## Enforcement Modes
 
 | Mode | Behavior |
@@ -75,10 +88,24 @@ Tier 4 tools (`read`, `image`, `canvas`, `sessions_list`, `sessions_history`, `s
 
 | Command | Description |
 |---|---|
-| `openclaw sanna doctor` | Check governance readiness (hooks, constitution, receipt store) |
+| `openclaw sanna doctor` | Check governance readiness (hooks, constitution, receipt store, keys, LLM checks) |
 | `openclaw sanna status` | Constitution info, enforcement stats |
-| `openclaw sanna audit` | Recent enforcement decisions (`--limit N`) |
-| `openclaw sanna verify <id>` | Look up a receipt by ID |
+| `openclaw sanna audit` | Recent enforcement decisions as a formatted table (`--limit N`, `--json`) |
+| `openclaw sanna verify <id>` | Verify a receipt's integrity (`--strict`, `--json`) |
+
+### Audit Output
+
+The `audit` command displays a color-coded table with timestamps, tool names, verdicts (green ALLOW, yellow ESCALATE, red HALT), and reasons. Use `--json` for machine-readable output.
+
+### Receipt Verification
+
+The `verify` command runs a 5-stage verification pipeline via `verifyReceipt()` from `@sanna-ai/core`:
+
+1. **Schema** — receipt structure validation
+2. **Integrity** — content hash verification
+3. **Fingerprint** — receipt fingerprint check
+4. **Signature** — Ed25519 signature verification (requires public key)
+5. **Strict** — all receipt checks passed (with `--strict` flag)
 
 ## Constitution Templates
 
@@ -87,8 +114,10 @@ Three starter templates in `constitutions/` for different use cases:
 | Template | Profile |
 |---|---|
 | `personal.yaml` | Lenient — broad execution and browsing, messaging escalated |
-| `developer.yaml` | Balanced — full workspace access, communication escalated |
+| `developer.yaml` | Balanced — full workspace access, communication escalated, dangerous commands escalated |
 | `team.yaml` | Strict — narrow execution, broad escalation requirements |
+
+All templates document evaluation order and matching asymmetry. Key ordering matches evaluation priority: `cannot_execute` → `must_escalate` → `can_execute`.
 
 See [docs/CONSTITUTION_GUIDE.md](docs/CONSTITUTION_GUIDE.md) for customization.
 
@@ -114,6 +143,34 @@ In `openclaw.json`, the plugin reads its config from the plugin block:
 
 `hooks.internal.enabled` **must be true** — without it, the `before_tool_call` hook never fires and governance is silently bypassed. In enforce mode, the plugin throws on startup if this is not set. In audit mode, it warns.
 
+### Full Configuration Reference
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `constitutionPath` | string | `""` (auto-discover) | Path to YAML constitution file |
+| `privateKeyPath` | string | `""` | Ed25519 private key PEM for receipt signing |
+| `publicKeyPath` | string | `""` | Ed25519 public key PEM for receipt verification |
+| `receiptStorePath` | string | `~/.sanna/receipts/openclaw.db` | SQLite receipt store path |
+| `governedTools` | string[] | All tier 1+2+3 | Tool names to govern |
+| `enforcementMode` | string | `"enforce"` | `enforce`, `audit`, or `passthrough` |
+| `otelExport` | boolean | `false` | Enable OpenTelemetry span export for receipts |
+| `otelServiceName` | string | `"sanna-openclaw"` | OTel service name for exported spans |
+| `llmChecks` | boolean | `false` | Enable LLM semantic checks for invariant evaluation |
+| `llmChecksModel` | string | `""` | Model to use for LLM checks |
+| `customEvaluatorsPath` | string | `""` | Path to JS module registering custom evaluators |
+
+### OpenTelemetry Integration
+
+Set `otelExport: true` and install `@opentelemetry/api` as a peer dependency. Governance receipts are exported as spans after each tool call decision. The exporter is fire-and-forget — failures are swallowed to avoid blocking enforcement.
+
+### LLM Semantic Checks
+
+Set `llmChecks: true` to enable AI-powered invariant evaluation. Optionally set `llmChecksModel` to specify which model to use. LLM checks are additive — they enhance but do not replace rule-based evaluation. Initialization failures are non-fatal.
+
+### Custom Evaluators
+
+Set `customEvaluatorsPath` to a JS module that registers custom invariant evaluators at load time via `registerInvariantEvaluator()` from `@sanna-ai/core`. The module is `require()`'d at plugin startup.
+
 ## Requirements
 
 - Node.js 22+
@@ -122,7 +179,7 @@ In `openclaw.json`, the plugin reads its config from the plugin block:
 ## Development
 
 ```bash
-# TypeScript tests (82 tests)
+# TypeScript tests (107 tests)
 npm test
 
 # Type check
