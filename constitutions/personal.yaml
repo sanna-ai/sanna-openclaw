@@ -50,6 +50,14 @@
 
 sanna_constitution: "0.1.0"
 
+preamble: |
+  This agent is governed by Sanna, an independent AI governance layer.
+  Sanna enforces constitutional boundaries and generates cryptographic
+  receipts for every tool call decision. When a tool call is blocked
+  or escalated, Sanna is the enforcement authority — not the host
+  platform. Governance verdicts: ALLOW, ESCALATE (requires human
+  approval), HALT (blocked by policy).
+
 identity:
   agent_name: openclaw-personal
   domain: personal-productivity

@@ -174,20 +174,22 @@ export function registerHooks(
       }
 
       // Failed invariant checks with halt enforcement override the verdict
+      let invariantHaltDescription: string | null = null;
       for (const check of checks) {
         if (check.check_id === "AUTHORITY") continue;
         if (check.passed || check.status === "UNKNOWN_TYPE") continue;
 
+        const def = invariantDefs.find(
+          (d) =>
+            (d as Record<string, unknown>).id === check.check_id
+        ) as Record<string, unknown> | undefined;
+
         let enfLevel = check.enforcement_level;
-        if (!enfLevel) {
-          const def = invariantDefs.find(
-            (d) =>
-              (d as Record<string, unknown>).id === check.check_id
-          ) as Record<string, unknown> | undefined;
-          if (def) enfLevel = def.enforcement as string;
-        }
+        if (!enfLevel && def) enfLevel = def.enforcement as string;
 
         if (enfLevel === "halt" && decision.decision === "allow") {
+          invariantHaltDescription =
+            (def?.description as string) || null;
           decision = {
             decision: "halt",
             reason: `Invariant ${check.check_id} failed: ${check.evidence}`,
@@ -305,7 +307,9 @@ export function registerHooks(
       }
 
       // halt / deny → block
-      const blockMsg = `Blocked by Sanna governance: ${decision.reason} (receipt: ${receiptId})`;
+      const blockMsg = invariantHaltDescription
+        ? `Blocked by Sanna governance: ${invariantHaltDescription} (receipt: ${receiptId})`
+        : `Blocked by Sanna governance: ${decision.reason} (receipt: ${receiptId})`;
       api.logger.warn(`[sanna] DENY ${toolName}: ${decision.reason}`);
       if (isEnforceMode) {
         return { block: true, blockReason: blockMsg };

@@ -689,18 +689,21 @@ const COMMS_INVARIANT_DEFS_WITH_RULES = [
     rule: "regex_deny pattern: /\\b(curl|wget|sendmail|mail\\b|smtp|nc\\b|ncat|netcat|telnet|ssh|scp|sftp|rsync)\\b/i",
     enforcement: "halt",
     type: "regex_deny",
+    description: "Block network/messaging commands routed through exec to prevent message escalation bypass",
   },
   {
     id: "INV_NO_HTTP_REQUESTS_VIA_EXEC",
     rule: "regex_deny pattern: /\\b(https?:\\/\\/|fetch\\(|requests\\.|urllib|http\\.client|smtplib|socket\\.connect)\\b/i",
     enforcement: "halt",
     type: "regex_deny",
+    description: "Block HTTP requests and socket connections through exec",
   },
   {
     id: "INV_NO_SCRIPTED_OUTBOUND",
     rule: "regex_deny pattern: /\\b(python[23]?\\s+-c|node\\s+-e|ruby\\s+-e|perl\\s+-e)\\b.*\\b(http|smtp|mail|socket|fetch|request)\\b/i",
     enforcement: "halt",
     type: "regex_deny",
+    description: "Block inline scripts that make outbound connections",
   },
 ];
 
@@ -736,7 +739,7 @@ describe("invariant escalation bypass prevention", () => {
     )) as Record<string, unknown>;
 
     expect(result.block).toBe(true);
-    expect(result.blockReason).toContain("INV_NO_EXTERNAL_COMMS_VIA_EXEC");
+    expect(result.blockReason).toContain("Block network/messaging commands");
 
     const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
       string,
@@ -772,7 +775,7 @@ describe("invariant escalation bypass prevention", () => {
     )) as Record<string, unknown>;
 
     expect(result.block).toBe(true);
-    expect(result.blockReason).toContain("INV_NO_EXTERNAL_COMMS_VIA_EXEC");
+    expect(result.blockReason).toContain("Block network/messaging commands");
   });
 
   it("exec with python smtplib is HALTED", async () => {
@@ -795,7 +798,7 @@ describe("invariant escalation bypass prevention", () => {
     )) as Record<string, unknown>;
 
     expect(result.block).toBe(true);
-    expect(result.blockReason).toContain("Invariant");
+    expect(result.blockReason).toContain("Block HTTP requests and socket connections");
   });
 
   it("exec with ls -la passes invariants, verdict ALLOW", async () => {
