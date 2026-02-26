@@ -105,13 +105,43 @@ export function registerCli(
         async (receiptId: string, opts: Record<string, string>) => {
           try {
             const results = store.query({ limit: 1000 });
-            const match = results.find(
-              (r) => (r as Record<string, unknown>).receipt_id === receiptId
-            );
-            if (!match) {
-              console.error(`Receipt not found: ${receiptId}`);
-              return;
+
+            // Support prefix matching for short IDs (e.g. from audit table)
+            let match: unknown | undefined;
+            if (receiptId.length < 36) {
+              const matches = results.filter(
+                (r) =>
+                  ((r as Record<string, unknown>).receipt_id as string)?.startsWith(
+                    receiptId
+                  )
+              );
+              if (matches.length === 0) {
+                console.error(`No receipt matching '${receiptId}'`);
+                return;
+              }
+              if (matches.length > 1) {
+                console.error(
+                  `Multiple receipts match '${receiptId}'. Be more specific:`
+                );
+                for (const m of matches) {
+                  console.error(
+                    `  ${(m as Record<string, unknown>).receipt_id}`
+                  );
+                }
+                return;
+              }
+              match = matches[0];
+            } else {
+              match = results.find(
+                (r) =>
+                  (r as Record<string, unknown>).receipt_id === receiptId
+              );
+              if (!match) {
+                console.error(`No receipt matching '${receiptId}'`);
+                return;
+              }
             }
+
             const receipt = match as Record<string, unknown>;
             const vResult = verifyReceipt(
               receipt,
@@ -289,6 +319,8 @@ export function registerCli(
             );
             allPassed = false;
           }
+        } else {
+          console.log("INFO  public key: not configured");
         }
 
         // 5. signing + verification combo
@@ -311,6 +343,8 @@ export function registerCli(
               ? `PASS  custom evaluators: ${absPath}`
               : `FAIL  custom evaluators not found: ${absPath}`
           );
+        } else {
+          console.log("INFO  custom evaluators: not configured");
         }
 
         // 8. Registered evaluators
@@ -351,6 +385,7 @@ const ANSI = {
 };
 
 interface AuditRow {
+  receiptShort: string;
   time: string;
   tool: string;
   verdict: string;
@@ -362,6 +397,10 @@ function extractRow(entry: unknown): AuditRow {
   const inputs = (r.inputs ?? {}) as Record<string, unknown>;
   const outputs = (r.outputs ?? {}) as Record<string, unknown>;
   const enforcement = (r.enforcement ?? {}) as Record<string, unknown>;
+
+  // Receipt short ID: first 8 characters
+  const receiptId = (r.receipt_id as string) ?? "";
+  const receiptShort = receiptId.slice(0, 8);
 
   // Time: parse ISO timestamp to local HH:MM:SS
   let time = "??:??:??";
@@ -388,7 +427,7 @@ function extractRow(entry: unknown): AuditRow {
   else if (rawVerdict === "escalate") verdict = "ESCALATE";
   else verdict = "HALT";
 
-  return { time, tool, verdict, reason };
+  return { receiptShort, time, tool, verdict, reason };
 }
 
 function colorVerdict(verdict: string): string {
@@ -420,6 +459,7 @@ export function printAuditTable(
   const rows = receipts.map(extractRow);
 
   // Column widths: auto-size with reasonable maximums
+  const colReceipt = 8; // fixed — first 8 chars of receipt_id
   const MAX_TIME = 8;
   const MAX_TOOL = 20;
   const MAX_VERDICT = 8; // "ESCALATE"
@@ -436,16 +476,16 @@ export function printAuditTable(
     Math.max(6, ...rows.map((r) => r.reason.length))
   );
 
-  // Box drawing helpers
+  // Box drawing helpers (5 columns)
   const hLine = (left: string, mid: string, right: string) =>
-    `${left}${"─".repeat(colTime + 2)}${mid}${"─".repeat(colTool + 2)}${mid}${"─".repeat(colVerdict + 2)}${mid}${"─".repeat(colReason + 2)}${right}`;
+    `${left}${"─".repeat(colReceipt + 2)}${mid}${"─".repeat(colTime + 2)}${mid}${"─".repeat(colTool + 2)}${mid}${"─".repeat(colVerdict + 2)}${mid}${"─".repeat(colReason + 2)}${right}`;
 
-  const row = (a: string, b: string, c: string, d: string) =>
-    `│ ${padRight(a, colTime)} │ ${padRight(b, colTool)} │ ${padRight(c, colVerdict)} │ ${padRight(d, colReason)} │`;
+  const row = (rid: string, a: string, b: string, c: string, d: string) =>
+    `│ ${padRight(rid, colReceipt)} │ ${padRight(a, colTime)} │ ${padRight(b, colTool)} │ ${padRight(c, colVerdict)} │ ${padRight(d, colReason)} │`;
 
   // Header banner (full-width, no column dividers)
-  // Inner width between ┌ and ┐ must match hLine: (col+2)*4 + 3 mids = cols + 11
-  const bannerWidth = colTime + colTool + colVerdict + colReason + 11;
+  // Inner width between ┌ and ┐: (col+2)*5 + 4 mids = cols + 14
+  const bannerWidth = colReceipt + colTime + colTool + colVerdict + colReason + 14;
   const title = `${ANSI.bold}SANNA GOVERNANCE AUDIT${ANSI.reset}`;
   const info = `Constitution: ${constitutionName}    Mode: ${mode}`;
 
@@ -457,6 +497,7 @@ export function printAuditTable(
   console.log(hLine("├", "┬", "┤"));
   console.log(
     row(
+      `${ANSI.bold}RECEIPT${ANSI.reset}`,
       `${ANSI.bold}TIME${ANSI.reset}`,
       `${ANSI.bold}TOOL${ANSI.reset}`,
       `${ANSI.bold}VERDICT${ANSI.reset}`,
@@ -469,6 +510,7 @@ export function printAuditTable(
   for (const r of rows) {
     console.log(
       row(
+        r.receiptShort,
         r.time,
         truncate(r.tool, colTool),
         colorVerdict(r.verdict),

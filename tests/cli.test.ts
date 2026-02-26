@@ -334,11 +334,53 @@ describe("verify command", () => {
     const verify = commands.find((c) => c.name === "verify");
 
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    await verify!.action!("r-nonexistent", {});
+    await verify!.action!("r-nonexistent-full-uuid-padding-here!", {});
 
     expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Receipt not found")
+      expect.stringContaining("No receipt matching")
     );
+    expect(mockVerifyReceipt).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("verify accepts prefix match", async () => {
+    const api = createMockApi();
+    registerCli(api, DEFAULT_CONFIG, createDeps());
+
+    const { program, commands } = createMockProgram();
+    api._cliRegistrations[0].fn({ program });
+
+    mockStoreQuery.mockReturnValue([MOCK_RECEIPT]);
+
+    const verify = commands.find((c) => c.name === "verify");
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await verify!.action!("r-test-0", {});
+    consoleSpy.mockRestore();
+
+    expect(mockVerifyReceipt).toHaveBeenCalledOnce();
+    expect(mockVerifyReceipt).toHaveBeenCalledWith(MOCK_RECEIPT, undefined);
+  });
+
+  it("verify prefix with multiple matches lists options", async () => {
+    const api = createMockApi();
+    registerCli(api, DEFAULT_CONFIG, createDeps());
+
+    const { program, commands } = createMockProgram();
+    api._cliRegistrations[0].fn({ program });
+
+    const receipt2 = { ...MOCK_RECEIPT, receipt_id: "r-test-002" };
+    mockStoreQuery.mockReturnValue([MOCK_RECEIPT, receipt2]);
+
+    const verify = commands.find((c) => c.name === "verify");
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await verify!.action!("r-test", {});
+
+    const output = errorSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("Multiple receipts match");
+    expect(output).toContain("r-test-001");
+    expect(output).toContain("r-test-002");
     expect(mockVerifyReceipt).not.toHaveBeenCalled();
     errorSpy.mockRestore();
   });
@@ -390,6 +432,72 @@ describe("doctor public key checks", () => {
     const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("FAIL  public key not found");
     expect(output).toContain("/path/to/missing.pem");
+    consoleSpy.mockRestore();
+  });
+
+  it("doctor shows public key not configured", async () => {
+    const api = createMockApi();
+    registerCli(api, DEFAULT_CONFIG, createDeps());
+
+    const { program, commands } = createMockProgram();
+    api._cliRegistrations[0].fn({ program });
+
+    const doctor = commands.find((c) => c.name === "doctor");
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await doctor!.action!();
+
+    const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("public key: not configured");
+    consoleSpy.mockRestore();
+  });
+
+  it("doctor shows LLM checks disabled by default", async () => {
+    const api = createMockApi();
+    registerCli(api, DEFAULT_CONFIG, createDeps());
+
+    const { program, commands } = createMockProgram();
+    api._cliRegistrations[0].fn({ program });
+
+    const doctor = commands.find((c) => c.name === "doctor");
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await doctor!.action!();
+
+    const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("LLM checks: disabled");
+    consoleSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// audit table output
+// ---------------------------------------------------------------------------
+
+describe("audit table output", () => {
+  it("audit table includes receipt short ID column", async () => {
+    const api = createMockApi();
+    registerCli(api, DEFAULT_CONFIG, createDeps());
+
+    const { program, commands } = createMockProgram();
+    api._cliRegistrations[0].fn({ program });
+
+    const audit = commands.find((c) => c.name === "audit");
+
+    const receipt = {
+      receipt_id: "a3f8c291-1234-5678-9abc-def012345678",
+      inputs: { tool: "exec", params: { command: "ls" } },
+      outputs: { verdict: "allow", reason: "Permitted" },
+      enforcement: { timestamp: "2026-01-15T10:30:00Z" },
+    };
+    mockStoreQuery.mockReturnValue([receipt]);
+
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await audit!.action!({ limit: "20" });
+
+    const output = consoleSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("RECEIPT");
+    expect(output).toContain("a3f8c291");
     consoleSpy.mockRestore();
   });
 });
