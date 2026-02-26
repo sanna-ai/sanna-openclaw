@@ -62,18 +62,26 @@ export function registerCli(
         sanna,
         "audit",
         "Show recent enforcement decisions",
-        { "--limit <n>": "Number of recent decisions" },
+        {
+          "--limit <n>": "Number of recent decisions",
+          "--json": "Output raw JSON instead of formatted table",
+        },
         async (opts: Record<string, string>) => {
           try {
             const limit = parseInt(opts.limit ?? "20", 10);
             const receipts = store.query({ limit });
             if (receipts.length === 0) {
-              console.log("No recent enforcement decisions.");
+              console.log("No enforcement decisions recorded.");
               return;
             }
-            for (const entry of receipts) {
-              console.log(JSON.stringify(entry));
+            if (opts.json) {
+              for (const entry of receipts) {
+                console.log(JSON.stringify(entry));
+              }
+              return;
             }
+            const mode = config.enforcementMode ?? "enforce";
+            printAuditTable(receipts, constitution.identity.agent_name, mode);
           } catch {
             console.error("Receipt query failed");
           }
@@ -156,6 +164,159 @@ export function registerCli(
       });
     },
     { commands: ["sanna"] }
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Audit table formatting
+// ---------------------------------------------------------------------------
+
+const ANSI = {
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  red: "\x1b[31m",
+  bold: "\x1b[1m",
+  dim: "\x1b[2m",
+  reset: "\x1b[0m",
+};
+
+interface AuditRow {
+  time: string;
+  tool: string;
+  verdict: string;
+  reason: string;
+}
+
+function extractRow(entry: unknown): AuditRow {
+  const r = entry as Record<string, unknown>;
+  const inputs = (r.inputs ?? {}) as Record<string, unknown>;
+  const outputs = (r.outputs ?? {}) as Record<string, unknown>;
+  const enforcement = (r.enforcement ?? {}) as Record<string, unknown>;
+
+  // Time: parse ISO timestamp to local HH:MM:SS
+  let time = "??:??:??";
+  const ts = enforcement.timestamp as string | undefined;
+  if (ts) {
+    const d = new Date(ts);
+    if (!isNaN(d.getTime())) {
+      time = d.toLocaleTimeString("en-GB", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      });
+    }
+  }
+
+  const tool = (inputs.tool as string) ?? "unknown";
+  const rawVerdict = (outputs.verdict as string) ?? "unknown";
+  const reason = (outputs.reason as string) ?? "";
+
+  // Normalize verdict display
+  let verdict: string;
+  if (rawVerdict === "allow") verdict = "ALLOW";
+  else if (rawVerdict === "escalate") verdict = "ESCALATE";
+  else verdict = "HALT";
+
+  return { time, tool, verdict, reason };
+}
+
+function colorVerdict(verdict: string): string {
+  if (verdict === "ALLOW") return `${ANSI.green}${verdict}${ANSI.reset}`;
+  if (verdict === "ESCALATE") return `${ANSI.yellow}${verdict}${ANSI.reset}`;
+  return `${ANSI.red}${verdict}${ANSI.reset}`;
+}
+
+/** Visible character length (strips ANSI escape sequences). */
+function visLen(s: string): number {
+  return s.replace(/\x1b\[[0-9;]*m/g, "").length;
+}
+
+function padRight(s: string, width: number): string {
+  const pad = width - visLen(s);
+  return pad > 0 ? s + " ".repeat(pad) : s;
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max - 1) + "…";
+}
+
+export function printAuditTable(
+  receipts: unknown[],
+  constitutionName: string,
+  mode: string
+): void {
+  const rows = receipts.map(extractRow);
+
+  // Column widths: auto-size with reasonable maximums
+  const MAX_TIME = 8;
+  const MAX_TOOL = 20;
+  const MAX_VERDICT = 8; // "ESCALATE"
+  const MAX_REASON = 50;
+
+  const colTime = Math.max(4, ...rows.map((r) => r.time.length), MAX_TIME);
+  const colTool = Math.min(
+    MAX_TOOL,
+    Math.max(4, ...rows.map((r) => r.tool.length))
+  );
+  const colVerdict = MAX_VERDICT;
+  const colReason = Math.min(
+    MAX_REASON,
+    Math.max(6, ...rows.map((r) => r.reason.length))
+  );
+
+  // Box drawing helpers
+  const hLine = (left: string, mid: string, right: string) =>
+    `${left}${"─".repeat(colTime + 2)}${mid}${"─".repeat(colTool + 2)}${mid}${"─".repeat(colVerdict + 2)}${mid}${"─".repeat(colReason + 2)}${right}`;
+
+  const row = (a: string, b: string, c: string, d: string) =>
+    `│ ${padRight(a, colTime)} │ ${padRight(b, colTool)} │ ${padRight(c, colVerdict)} │ ${padRight(d, colReason)} │`;
+
+  // Header banner (full-width, no column dividers)
+  // Inner width between ┌ and ┐ must match hLine: (col+2)*4 + 3 mids = cols + 11
+  const bannerWidth = colTime + colTool + colVerdict + colReason + 11;
+  const title = `${ANSI.bold}SANNA GOVERNANCE AUDIT${ANSI.reset}`;
+  const info = `Constitution: ${constitutionName}    Mode: ${mode}`;
+
+  console.log(`┌${"─".repeat(bannerWidth)}┐`);
+  console.log(`│ ${padRight(title, bannerWidth - 1)}│`);
+  console.log(`│ ${padRight(info, bannerWidth - 1)}│`);
+
+  // Column headers
+  console.log(hLine("├", "┬", "┤"));
+  console.log(
+    row(
+      `${ANSI.bold}TIME${ANSI.reset}`,
+      `${ANSI.bold}TOOL${ANSI.reset}`,
+      `${ANSI.bold}VERDICT${ANSI.reset}`,
+      `${ANSI.bold}REASON${ANSI.reset}`
+    )
+  );
+  console.log(hLine("├", "┼", "┤"));
+
+  // Data rows
+  for (const r of rows) {
+    console.log(
+      row(
+        r.time,
+        truncate(r.tool, colTool),
+        colorVerdict(r.verdict),
+        truncate(r.reason, colReason)
+      )
+    );
+  }
+
+  // Bottom border
+  console.log(hLine("└", "┴", "┘"));
+
+  // Summary line
+  const total = rows.length;
+  const allowed = rows.filter((r) => r.verdict === "ALLOW").length;
+  const escalated = rows.filter((r) => r.verdict === "ESCALATE").length;
+  const halted = rows.filter((r) => r.verdict === "HALT").length;
+  console.log(
+    `${ANSI.dim}${total} decisions: ${allowed} allowed, ${escalated} escalated, ${halted} halted${ANSI.reset}`
   );
 }
 
