@@ -111,8 +111,9 @@ export function registerHooks(
       const checks: CheckResult[] = [authorityCheck];
 
       // Run constitution invariant checks on tool params
+      let invariantDefs: unknown[] = [];
       try {
-        const invariantDefs = loadInvariantChecks(constitution);
+        invariantDefs = loadInvariantChecks(constitution) as unknown[];
         if (invariantDefs.length > 0) {
           const output = JSON.stringify(params);
           const context = `tool:${toolName} params:${Object.keys(params).join(",")}`;
@@ -121,6 +122,48 @@ export function registerHooks(
             output,
             context
           );
+
+          // Bug fix: core returns UNKNOWN_TYPE for regex_deny rules because
+          // it has no regex evaluator. Evaluate them in-process for exec/bash
+          // tools where shell commands could route around other controls.
+          if (toolName === "exec" || toolName === "bash") {
+            for (const check of invariantResults) {
+              if (check.status !== "UNKNOWN_TYPE") continue;
+              const def = invariantDefs.find(
+                (d) =>
+                  (d as Record<string, unknown>).id === check.check_id
+              ) as Record<string, unknown> | undefined;
+              if (!def) continue;
+              const rule = def.rule as string | undefined;
+              if (!rule?.startsWith("regex_deny pattern:")) continue;
+
+              const regexStr = rule
+                .slice("regex_deny pattern:".length)
+                .trim();
+              const parts = regexStr.match(/^\/(.+)\/([gimsuy]*)$/);
+              if (!parts) continue;
+
+              try {
+                const regex = new RegExp(parts[1], parts[2]);
+                const testStr = JSON.stringify(params);
+                const hit = regex.exec(testStr);
+                if (hit) {
+                  check.passed = false;
+                  check.status = "FAIL";
+                  check.evidence = `Parameter matched denied pattern: ${hit[0]}`;
+                } else {
+                  check.passed = true;
+                  check.status = "PASS";
+                  check.evidence =
+                    "Parameter did not match denied pattern";
+                }
+                check.enforcement_level = def.enforcement as string;
+              } catch {
+                // Invalid regex — leave as UNKNOWN_TYPE
+              }
+            }
+          }
+
           checks.push(...invariantResults);
         }
       } catch (err) {
@@ -129,6 +172,40 @@ export function registerHooks(
           `[sanna] Invariant check error for ${toolName}: ${msg}`
         );
       }
+
+      // Failed invariant checks with halt enforcement override the verdict
+      for (const check of checks) {
+        if (check.check_id === "AUTHORITY") continue;
+        if (check.passed || check.status === "UNKNOWN_TYPE") continue;
+
+        let enfLevel = check.enforcement_level;
+        if (!enfLevel) {
+          const def = invariantDefs.find(
+            (d) =>
+              (d as Record<string, unknown>).id === check.check_id
+          ) as Record<string, unknown> | undefined;
+          if (def) enfLevel = def.enforcement as string;
+        }
+
+        if (enfLevel === "halt" && decision.decision === "allow") {
+          decision = {
+            decision: "halt",
+            reason: `Invariant ${check.check_id} failed: ${check.evidence}`,
+            boundary_type: decision.boundary_type,
+          };
+          break;
+        }
+      }
+
+      // Collect failed invariant check IDs for enforcement block
+      const failedInvariantIds = checks
+        .filter(
+          (c) =>
+            c.check_id !== "AUTHORITY" &&
+            !c.passed &&
+            c.status !== "UNKNOWN_TYPE"
+        )
+        .map((c) => c.check_id);
 
       // Compute evaluation coverage
       const evaluation_coverage = {
@@ -158,9 +235,12 @@ export function registerHooks(
           enforcement: {
             action: toolName,
             reason: decision.reason,
-            failed_checks: decision.decision !== "allow"
-              ? [`${decision.boundary_type}: ${decision.reason}`]
-              : [],
+            failed_checks: [
+              ...(decision.decision !== "allow"
+                ? [`${decision.boundary_type}: ${decision.reason}`]
+                : []),
+              ...failedInvariantIds,
+            ],
             enforcement_mode: config.enforcementMode ?? "enforce",
             timestamp: new Date().toISOString(),
           },

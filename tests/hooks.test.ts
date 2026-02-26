@@ -682,14 +682,41 @@ describe("checks and evaluation_coverage", () => {
 // invariant escalation bypass prevention
 // ---------------------------------------------------------------------------
 
-const COMMS_INVARIANT_DEFS = [
-  { id: "INV_NO_EXTERNAL_COMMS_VIA_EXEC", type: "regex_deny", params: {} },
-  { id: "INV_NO_HTTP_REQUESTS_VIA_EXEC", type: "regex_deny", params: {} },
-  { id: "INV_NO_SCRIPTED_OUTBOUND", type: "regex_deny", params: {} },
+// Invariant definitions with actual regex_deny rules from constitutions
+const COMMS_INVARIANT_DEFS_WITH_RULES = [
+  {
+    id: "INV_NO_EXTERNAL_COMMS_VIA_EXEC",
+    rule: "regex_deny pattern: /\\b(curl|wget|sendmail|mail\\b|smtp|nc\\b|ncat|netcat|telnet|ssh|scp|sftp|rsync)\\b/i",
+    enforcement: "halt",
+    type: "regex_deny",
+  },
+  {
+    id: "INV_NO_HTTP_REQUESTS_VIA_EXEC",
+    rule: "regex_deny pattern: /\\b(https?:\\/\\/|fetch\\(|requests\\.|urllib|http\\.client|smtplib|socket\\.connect)\\b/i",
+    enforcement: "halt",
+    type: "regex_deny",
+  },
+  {
+    id: "INV_NO_SCRIPTED_OUTBOUND",
+    rule: "regex_deny pattern: /\\b(python[23]?\\s+-c|node\\s+-e|ruby\\s+-e|perl\\s+-e)\\b.*\\b(http|smtp|mail|socket|fetch|request)\\b/i",
+    enforcement: "halt",
+    type: "regex_deny",
+  },
 ];
 
+// Core returns UNKNOWN_TYPE for regex_deny rules it can't evaluate
+function unknownTypeResults() {
+  return COMMS_INVARIANT_DEFS_WITH_RULES.map((d) => ({
+    check_id: d.id,
+    passed: false,
+    status: "UNKNOWN_TYPE",
+    severity: "critical",
+    evidence: null,
+  }));
+}
+
 describe("invariant escalation bypass prevention", () => {
-  it("exec with curl in params fails INV_NO_EXTERNAL_COMMS_VIA_EXEC", async () => {
+  it("exec with sendmail in params is HALTED by invariant", async () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps());
 
@@ -699,64 +726,17 @@ describe("invariant escalation bypass prevention", () => {
       boundary_type: "can_execute",
     });
 
-    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS);
-    mockRunAllInvariantChecks.mockReturnValue([
-      {
-        check_id: "INV_NO_EXTERNAL_COMMS_VIA_EXEC",
-        name: "Block network/messaging commands",
-        passed: false,
-        severity: "critical",
-        status: "FAIL",
-        evidence: "matched: curl",
-      },
-    ]);
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
 
     const hook = api._hooks.get("before_tool_call")!;
-    await hook(
-      { toolName: "exec", params: { command: "curl https://example.com" } },
-      { toolName: "exec" }
-    );
-
-    const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
-      string,
-      unknown
-    >;
-    const checks = receiptArgs.checks as Array<Record<string, unknown>>;
-    const failed = checks.find(
-      (c) => c.check_id === "INV_NO_EXTERNAL_COMMS_VIA_EXEC"
-    );
-    expect(failed).toBeDefined();
-    expect(failed!.passed).toBe(false);
-    expect(failed!.severity).toBe("critical");
-  });
-
-  it("exec with sendmail in params fails invariant", async () => {
-    const api = createMockApi();
-    registerHooks(api, ENFORCE_CONFIG, createDeps());
-
-    mockEvaluateAuthority.mockReturnValue({
-      decision: "allow",
-      reason: "Permitted",
-      boundary_type: "can_execute",
-    });
-
-    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS);
-    mockRunAllInvariantChecks.mockReturnValue([
-      {
-        check_id: "INV_NO_EXTERNAL_COMMS_VIA_EXEC",
-        name: "Block network/messaging commands",
-        passed: false,
-        severity: "critical",
-        status: "FAIL",
-        evidence: "matched: sendmail",
-      },
-    ]);
-
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook(
+    const result = (await hook(
       { toolName: "exec", params: { command: "sendmail nic@sanna.dev" } },
       { toolName: "exec" }
-    );
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("INV_NO_EXTERNAL_COMMS_VIA_EXEC");
 
     const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
       string,
@@ -768,9 +748,11 @@ describe("invariant escalation bypass prevention", () => {
     );
     expect(failed).toBeDefined();
     expect(failed!.passed).toBe(false);
+    expect(failed!.status).toBe("FAIL");
+    expect(failed!.evidence).toContain("sendmail");
   });
 
-  it("exec with python -c smtplib fails INV_NO_HTTP_REQUESTS_VIA_EXEC", async () => {
+  it("exec with curl is HALTED by invariant", async () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps());
 
@@ -780,38 +762,43 @@ describe("invariant escalation bypass prevention", () => {
       boundary_type: "can_execute",
     });
 
-    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS);
-    mockRunAllInvariantChecks.mockReturnValue([
-      {
-        check_id: "INV_NO_HTTP_REQUESTS_VIA_EXEC",
-        name: "Block HTTP requests and socket connections",
-        passed: false,
-        severity: "critical",
-        status: "FAIL",
-        evidence: "matched: smtplib",
-      },
-    ]);
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
 
     const hook = api._hooks.get("before_tool_call")!;
-    await hook(
+    const result = (await hook(
+      { toolName: "exec", params: { command: "curl https://evil.com" } },
+      { toolName: "exec" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("INV_NO_EXTERNAL_COMMS_VIA_EXEC");
+  });
+
+  it("exec with python smtplib is HALTED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
       { toolName: "exec", params: { command: "python -c 'import smtplib'" } },
       { toolName: "exec" }
-    );
+    )) as Record<string, unknown>;
 
-    const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
-      string,
-      unknown
-    >;
-    const checks = receiptArgs.checks as Array<Record<string, unknown>>;
-    const failed = checks.find(
-      (c) => c.check_id === "INV_NO_HTTP_REQUESTS_VIA_EXEC"
-    );
-    expect(failed).toBeDefined();
-    expect(failed!.passed).toBe(false);
-    expect(failed!.severity).toBe("critical");
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Invariant");
   });
 
-  it("exec with normal command passes all invariants", async () => {
+  it("exec with ls -la passes invariants, verdict ALLOW", async () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps());
 
@@ -821,27 +808,29 @@ describe("invariant escalation bypass prevention", () => {
       boundary_type: "can_execute",
     });
 
-    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS);
-    mockRunAllInvariantChecks.mockReturnValue([]);
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
 
     const hook = api._hooks.get("before_tool_call")!;
-    await hook(
+    const result = await hook(
       { toolName: "exec", params: { command: "ls -la" } },
       { toolName: "exec" }
     );
 
+    expect(result).toEqual({ blocked: false });
+
     const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
       string,
       unknown
     >;
     const checks = receiptArgs.checks as Array<Record<string, unknown>>;
-    // Only authority check, no failed invariants
-    expect(checks).toHaveLength(1);
-    expect(checks[0].check_id).toBe("AUTHORITY");
-    expect(checks[0].passed).toBe(true);
+    // All invariant checks should pass (regex didn't match)
+    for (const check of checks) {
+      expect(check.passed).toBe(true);
+    }
   });
 
-  it("write tool with http URL in content does NOT trigger invariant", async () => {
+  it("write tool with https URL in content stays ALLOW", async () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps());
 
@@ -851,12 +840,12 @@ describe("invariant escalation bypass prevention", () => {
       boundary_type: "can_execute",
     });
 
-    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS);
-    // Simulates: regex patterns don't match on write tool file content
-    mockRunAllInvariantChecks.mockReturnValue([]);
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    // Core returns UNKNOWN_TYPE for all regex_deny rules
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
 
     const hook = api._hooks.get("before_tool_call")!;
-    await hook(
+    const result = await hook(
       {
         toolName: "write",
         params: {
@@ -867,15 +856,9 @@ describe("invariant escalation bypass prevention", () => {
       { toolName: "write" }
     );
 
-    const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
-      string,
-      unknown
-    >;
-    const checks = receiptArgs.checks as Array<Record<string, unknown>>;
-    // Only authority check — no failed invariants
-    expect(checks).toHaveLength(1);
-    expect(checks[0].check_id).toBe("AUTHORITY");
-    expect(checks[0].passed).toBe(true);
+    // Write tool: regex fallback does NOT run (only exec/bash)
+    // UNKNOWN_TYPE checks are ignored by verdict override
+    expect(result).toEqual({ blocked: false });
   });
 });
 
