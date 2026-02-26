@@ -1,7 +1,35 @@
 # Sanna Constitution: Developer Workspace
+# ─────────────────────────────────────────────────────────────────────
 # Balanced governance for development workflows. Full workspace access
-# with escalation for external communication and infrastructure changes.
-
+# with escalation for external communication, infrastructure changes,
+# and dangerous command patterns.
+#
+# GOVERNANCE MODEL
+# ================
+# Authority boundaries use three tiers evaluated in priority order:
+#
+#   1. cannot_execute  — HALT (highest priority, immediate deny)
+#   2. must_escalate   — ESCALATE (requires human approval)
+#   3. can_execute     — ALLOW (permitted actions)
+#
+# IMPORTANT: Tool name matching vs. parameter matching
+# ─────────────────────────────────────────────────────
+# cannot_execute and can_execute match TOOL NAMES ONLY.
+#   Example: "cron" matches a tool literally named "cron"
+#
+# must_escalate conditions match the FULL ACTION CONTEXT — tool name
+# AND all parameters (argument names and values).
+#   Example: condition "crontab" matches exec(command="crontab -l")
+#
+# This distinction matters because agents route around tool-name
+# restrictions. An agent denied access to "cron" will use "exec" to
+# run crontab commands instead. Parameter-level conditions in
+# must_escalate catch these substitutions.
+#
+# RULE OF THUMB: If you're governing what a tool IS, use
+# cannot_execute/can_execute. If you're governing what a tool DOES,
+# use must_escalate conditions.
+#
 sanna_constitution: "0.1.0"
 
 identity:
@@ -10,13 +38,15 @@ identity:
   description: >-
     Development agent with full workspace access including process control.
     External communication and session management require escalation.
-    Infrastructure orchestration is prohibited.
+    Dangerous command patterns (privilege escalation, destructive operations,
+    infrastructure changes) require escalation even through allowed tools.
+    Direct infrastructure orchestration tools are prohibited.
 
 provenance:
   authored_by: sanna-openclaw
   approved_by:
     - team-lead
-  approval_date: "2026-02-24"
+  approval_date: "2026-02-26"
   approval_method: template
 
 boundaries:
@@ -24,16 +54,74 @@ boundaries:
     description: Agent operates within the development workspace
     category: scope
     severity: medium
+
   - id: B002
     description: External communication requires escalation
     category: safety
     severity: high
+
   - id: B003
-    description: Infrastructure changes are prohibited
+    description: Infrastructure orchestration tools are prohibited
     category: authorization
     severity: critical
 
+  - id: B004
+    description: >-
+      Dangerous command patterns require escalation regardless of which
+      tool executes them. Covers privilege escalation, destructive
+      operations, and system-level changes routed through exec or bash.
+    category: safety
+    severity: critical
+
 authority_boundaries:
+
+  # ── DENY (tool name match) ──────────────────────────────────────
+  # Matches tool names only. Use for tools that should NEVER be
+  # called directly, regardless of parameters.
+  cannot_execute:
+    - nodes       # direct Node.js orchestration
+    - cron        # direct cron management
+    - gateway     # gateway configuration
+
+  # ── ESCALATE (full context match) ───────────────────────────────
+  # Matches tool name AND parameters. Use for dangerous PATTERNS
+  # that could appear inside any allowed tool's arguments.
+  #
+  # Each condition is keyword-matched against the full action context
+  # string: "toolname paramkey paramvalue paramkey paramvalue ..."
+  # All significant words (3+ chars, no stop words) must appear.
+  must_escalate:
+    # External communication
+    - condition: message
+    - condition: sessions_send
+    - condition: sessions_spawn
+
+    # Privilege escalation
+    - condition: sudo
+    - condition: chmod 777
+    - condition: chown
+
+    # Destructive operations
+    - condition: rm -rf
+    - condition: mkfs
+    - condition: dd if
+
+    # System/infrastructure changes via exec
+    - condition: crontab
+    - condition: shutdown
+    - condition: reboot
+    - condition: systemctl
+    - condition: iptables
+    - condition: ufw
+
+    # Package/environment modification
+    - condition: apt remove
+    - condition: pip uninstall
+    - condition: npm uninstall
+
+  # ── ALLOW (tool name match) ─────────────────────────────────────
+  # Matches tool names only. These tools are permitted but still
+  # subject to must_escalate conditions on their parameters.
   can_execute:
     - exec
     - bash
@@ -44,11 +132,3 @@ authority_boundaries:
     - browser
     - web_search
     - web_fetch
-  must_escalate:
-    - condition: message
-    - condition: sessions_send
-    - condition: sessions_spawn
-  cannot_execute:
-    - nodes
-    - cron
-    - gateway
