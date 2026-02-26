@@ -10,12 +10,18 @@
  */
 
 import type { SannaConfig, PluginAPI } from "./types.js";
-import type { Constitution, AuthorityDecision } from "@sanna-ai/core";
+import type {
+  Constitution,
+  AuthorityDecision,
+  CheckResult,
+} from "@sanna-ai/core";
 import {
   evaluateAuthority,
   generateReceipt,
   signReceipt,
   ReceiptStore,
+  loadInvariantChecks,
+  runAllInvariantChecks,
 } from "@sanna-ai/core";
 import type { KeyObject } from "node:crypto";
 
@@ -87,6 +93,46 @@ export function registerHooks(
         return undefined;
       }
 
+      // Build checks array: authority check + invariant checks
+      const authorityCheck: CheckResult = {
+        check_id: "AUTHORITY",
+        name: "Authority Boundary Evaluation",
+        passed: decision.decision === "allow",
+        severity: decision.decision === "allow" ? "info" : "critical",
+        status: decision.decision === "allow" ? "PASS" : "FAIL",
+        evidence: `${decision.boundary_type}: ${decision.reason}`,
+      };
+
+      const checks: CheckResult[] = [authorityCheck];
+
+      // Run constitution invariant checks on tool params
+      try {
+        const invariantDefs = loadInvariantChecks(constitution);
+        if (invariantDefs.length > 0) {
+          const output = JSON.stringify(params);
+          const context = `tool:${toolName} params:${Object.keys(params).join(",")}`;
+          const invariantResults = runAllInvariantChecks(
+            constitution,
+            output,
+            context
+          );
+          checks.push(...invariantResults);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        api.logger.warn(
+          `[sanna] Invariant check error for ${toolName}: ${msg}`
+        );
+      }
+
+      // Compute evaluation coverage
+      const evaluation_coverage = {
+        checks_run: checks.length,
+        checks_passed: checks.filter((c) => c.passed).length,
+        checks_failed: checks.filter((c) => !c.passed).length,
+        coverage_pct: checks.length > 0 ? 100 : 0,
+      };
+
       // Generate receipt for EVERY decision
       const correlationId = `${toolName}-${Date.now()}`;
       let receipt: Record<string, unknown>;
@@ -99,7 +145,7 @@ export function registerHooks(
             reason: decision.reason,
             boundary_type: decision.boundary_type,
           },
-          checks: [],
+          checks,
           constitution_ref: {
             document_id: constitution.identity.agent_name,
             policy_hash: constitution.policy_hash ?? "",
@@ -113,6 +159,7 @@ export function registerHooks(
             enforcement_mode: config.enforcementMode ?? "enforce",
             timestamp: new Date().toISOString(),
           },
+          evaluation_coverage,
         }) as unknown as Record<string, unknown>;
 
         if (privateKey) {

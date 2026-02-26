@@ -10,11 +10,16 @@ const mockEvaluateAuthority = vi.fn();
 const mockGenerateReceipt = vi.fn();
 const mockSignReceipt = vi.fn();
 const mockStoreSave = vi.fn();
+const mockLoadInvariantChecks = vi.fn();
+const mockRunAllInvariantChecks = vi.fn();
 
 vi.mock("@sanna-ai/core", () => ({
   evaluateAuthority: (...args: unknown[]) => mockEvaluateAuthority(...args),
   generateReceipt: (...args: unknown[]) => mockGenerateReceipt(...args),
   signReceipt: (...args: unknown[]) => mockSignReceipt(...args),
+  loadInvariantChecks: (...args: unknown[]) => mockLoadInvariantChecks(...args),
+  runAllInvariantChecks: (...args: unknown[]) =>
+    mockRunAllInvariantChecks(...args),
   ReceiptStore: vi.fn(),
 }));
 
@@ -90,6 +95,9 @@ beforeEach(() => {
   // Default: generate receipt returns an object with receipt_id
   mockGenerateReceipt.mockReturnValue({ receipt_id: "r-mock-123" });
   mockSignReceipt.mockImplementation((r: unknown) => r);
+  // Default: no invariant checks defined
+  mockLoadInvariantChecks.mockReturnValue([]);
+  mockRunAllInvariantChecks.mockReturnValue([]);
 });
 
 afterEach(() => {
@@ -401,6 +409,272 @@ describe("before_tool_call", () => {
       fakeKey,
       "sanna-openclaw"
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checks and evaluation_coverage
+// ---------------------------------------------------------------------------
+
+describe("checks and evaluation_coverage", () => {
+  it("authority decision appears as CheckResult in receipt checks array", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook({ toolName: "exec", params: {} }, { toolName: "exec" });
+
+    const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    const checks = receiptArgs.checks as Array<Record<string, unknown>>;
+    expect(checks).toBeDefined();
+    const authority = checks.find((c) => c.check_id === "AUTHORITY");
+    expect(authority).toBeDefined();
+    expect(authority!.passed).toBe(true);
+    expect(authority!.name).toBe("Authority Boundary Evaluation");
+    expect(authority!.severity).toBe("info");
+    expect(authority!.status).toBe("PASS");
+    expect(authority!.evidence).toBe("can_execute: Permitted");
+  });
+
+  it("authority deny appears as failed CheckResult", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "halt",
+      reason: "Tool not allowed",
+      boundary_type: "cannot_execute",
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook({ toolName: "rm", params: {} }, { toolName: "rm" });
+
+    const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    const checks = receiptArgs.checks as Array<Record<string, unknown>>;
+    const authority = checks.find((c) => c.check_id === "AUTHORITY");
+    expect(authority).toBeDefined();
+    expect(authority!.passed).toBe(false);
+    expect(authority!.severity).toBe("critical");
+  });
+
+  it("constitution invariants run on tool params", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue([
+      { id: "INV-001", type: "pattern", params: {} },
+    ]);
+    mockRunAllInvariantChecks.mockReturnValue([
+      {
+        check_id: "INV-001",
+        name: "Pattern check",
+        passed: true,
+        severity: "info",
+        evidence: "no match",
+      },
+    ]);
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook(
+      { toolName: "exec", params: { command: "ls" } },
+      { toolName: "exec" }
+    );
+
+    expect(mockRunAllInvariantChecks).toHaveBeenCalledOnce();
+
+    const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    const checks = receiptArgs.checks as Array<Record<string, unknown>>;
+    expect(checks).toHaveLength(2);
+    expect(checks[0].check_id).toBe("AUTHORITY");
+    expect(checks[1].check_id).toBe("INV-001");
+  });
+
+  it("invariant check error does not block enforcement", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockImplementation(() => {
+      throw new Error("invariant load failed");
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = await hook(
+      { toolName: "exec", params: {} },
+      { toolName: "exec" }
+    );
+
+    // Should still generate receipt and allow
+    expect(result).toEqual({ blocked: false });
+    expect(mockGenerateReceipt).toHaveBeenCalledOnce();
+
+    const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    const checks = receiptArgs.checks as Array<Record<string, unknown>>;
+    expect(checks).toHaveLength(1);
+    expect(checks[0].check_id).toBe("AUTHORITY");
+  });
+
+  it("evaluation_coverage is populated", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue([
+      { id: "INV-001", type: "pattern", params: {} },
+    ]);
+    mockRunAllInvariantChecks.mockReturnValue([
+      {
+        check_id: "INV-001",
+        passed: false,
+        severity: "high",
+        evidence: "match found",
+      },
+    ]);
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook({ toolName: "exec", params: {} }, { toolName: "exec" });
+
+    const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    const coverage = receiptArgs.evaluation_coverage as Record<
+      string,
+      unknown
+    >;
+    expect(coverage).toBeDefined();
+    expect(coverage.checks_run).toBe(2);
+    expect(coverage.checks_passed).toBe(1); // authority passed
+    expect(coverage.checks_failed).toBe(1); // invariant failed
+    expect(coverage.coverage_pct).toBe(100);
+  });
+
+  it("empty invariant list produces authority-only receipt", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue([]);
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook({ toolName: "exec", params: {} }, { toolName: "exec" });
+
+    expect(mockRunAllInvariantChecks).not.toHaveBeenCalled();
+
+    const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    const checks = receiptArgs.checks as Array<Record<string, unknown>>;
+    expect(checks).toHaveLength(1);
+    expect(checks[0].check_id).toBe("AUTHORITY");
+  });
+
+  it("invariant check failure changes receipt status", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue([
+      { id: "INV-002", type: "pattern", params: {} },
+    ]);
+    mockRunAllInvariantChecks.mockReturnValue([
+      {
+        check_id: "INV-002",
+        name: "Dangerous pattern",
+        passed: false,
+        severity: "high",
+        evidence: "matched dangerous pattern",
+      },
+    ]);
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook({ toolName: "exec", params: {} }, { toolName: "exec" });
+
+    const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    const checks = receiptArgs.checks as Array<Record<string, unknown>>;
+    expect(checks).toHaveLength(2);
+    const failedCheck = checks.find((c) => c.check_id === "INV-002");
+    expect(failedCheck).toBeDefined();
+    expect(failedCheck!.passed).toBe(false);
+    expect(failedCheck!.severity).toBe("high");
+    expect(failedCheck!.evidence).toBe("matched dangerous pattern");
+  });
+
+  it("escalate decision produces failed authority check", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "escalate",
+      reason: "Needs human approval",
+      boundary_type: "must_escalate",
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook(
+      { toolName: "browser", params: { action: "navigate" } },
+      { toolName: "browser" }
+    );
+
+    const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    const checks = receiptArgs.checks as Array<Record<string, unknown>>;
+    const authority = checks.find((c) => c.check_id === "AUTHORITY");
+    expect(authority).toBeDefined();
+    expect(authority!.passed).toBe(false);
+    expect(authority!.severity).toBe("critical");
+    expect(authority!.status).toBe("FAIL");
+    expect(authority!.evidence).toBe("must_escalate: Needs human approval");
   });
 });
 
