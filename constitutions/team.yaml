@@ -86,10 +86,11 @@ boundaries:
     severity: critical
 
 authority_boundaries:
-  can_execute:
-    - exec
-    - bash
-    - web_search
+  cannot_execute:
+    - process
+    - nodes
+    - cron
+    - gateway
   must_escalate:
     - condition: write
     - condition: edit
@@ -99,8 +100,7 @@ authority_boundaries:
     - condition: message
     - condition: sessions_send
     - condition: sessions_spawn
-  cannot_execute:
-    - process
-    - nodes
-    - cron
-    - gateway
+  can_execute:
+    - exec
+    - bash
+    - web_search

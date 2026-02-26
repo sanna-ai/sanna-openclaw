@@ -75,6 +75,15 @@ boundaries:
     severity: high
 
 authority_boundaries:
+  cannot_execute:
+    - nodes
+    - cron
+    - gateway
+  must_escalate:
+    - condition: message
+    - condition: sessions_send
+    - condition: sessions_spawn
+    - condition: process
   can_execute:
     - exec
     - bash
@@ -84,12 +93,3 @@ authority_boundaries:
     - browser
     - web_search
     - web_fetch
-  must_escalate:
-    - condition: message
-    - condition: sessions_send
-    - condition: sessions_spawn
-    - condition: process
-  cannot_execute:
-    - nodes
-    - cron
-    - gateway
