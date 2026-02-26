@@ -679,6 +679,207 @@ describe("checks and evaluation_coverage", () => {
 });
 
 // ---------------------------------------------------------------------------
+// invariant escalation bypass prevention
+// ---------------------------------------------------------------------------
+
+const COMMS_INVARIANT_DEFS = [
+  { id: "INV_NO_EXTERNAL_COMMS_VIA_EXEC", type: "regex_deny", params: {} },
+  { id: "INV_NO_HTTP_REQUESTS_VIA_EXEC", type: "regex_deny", params: {} },
+  { id: "INV_NO_SCRIPTED_OUTBOUND", type: "regex_deny", params: {} },
+];
+
+describe("invariant escalation bypass prevention", () => {
+  it("exec with curl in params fails INV_NO_EXTERNAL_COMMS_VIA_EXEC", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS);
+    mockRunAllInvariantChecks.mockReturnValue([
+      {
+        check_id: "INV_NO_EXTERNAL_COMMS_VIA_EXEC",
+        name: "Block network/messaging commands",
+        passed: false,
+        severity: "critical",
+        status: "FAIL",
+        evidence: "matched: curl",
+      },
+    ]);
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook(
+      { toolName: "exec", params: { command: "curl https://example.com" } },
+      { toolName: "exec" }
+    );
+
+    const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    const checks = receiptArgs.checks as Array<Record<string, unknown>>;
+    const failed = checks.find(
+      (c) => c.check_id === "INV_NO_EXTERNAL_COMMS_VIA_EXEC"
+    );
+    expect(failed).toBeDefined();
+    expect(failed!.passed).toBe(false);
+    expect(failed!.severity).toBe("critical");
+  });
+
+  it("exec with sendmail in params fails invariant", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS);
+    mockRunAllInvariantChecks.mockReturnValue([
+      {
+        check_id: "INV_NO_EXTERNAL_COMMS_VIA_EXEC",
+        name: "Block network/messaging commands",
+        passed: false,
+        severity: "critical",
+        status: "FAIL",
+        evidence: "matched: sendmail",
+      },
+    ]);
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook(
+      { toolName: "exec", params: { command: "sendmail nic@sanna.dev" } },
+      { toolName: "exec" }
+    );
+
+    const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    const checks = receiptArgs.checks as Array<Record<string, unknown>>;
+    const failed = checks.find(
+      (c) => c.check_id === "INV_NO_EXTERNAL_COMMS_VIA_EXEC"
+    );
+    expect(failed).toBeDefined();
+    expect(failed!.passed).toBe(false);
+  });
+
+  it("exec with python -c smtplib fails INV_NO_HTTP_REQUESTS_VIA_EXEC", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS);
+    mockRunAllInvariantChecks.mockReturnValue([
+      {
+        check_id: "INV_NO_HTTP_REQUESTS_VIA_EXEC",
+        name: "Block HTTP requests and socket connections",
+        passed: false,
+        severity: "critical",
+        status: "FAIL",
+        evidence: "matched: smtplib",
+      },
+    ]);
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook(
+      { toolName: "exec", params: { command: "python -c 'import smtplib'" } },
+      { toolName: "exec" }
+    );
+
+    const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    const checks = receiptArgs.checks as Array<Record<string, unknown>>;
+    const failed = checks.find(
+      (c) => c.check_id === "INV_NO_HTTP_REQUESTS_VIA_EXEC"
+    );
+    expect(failed).toBeDefined();
+    expect(failed!.passed).toBe(false);
+    expect(failed!.severity).toBe("critical");
+  });
+
+  it("exec with normal command passes all invariants", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS);
+    mockRunAllInvariantChecks.mockReturnValue([]);
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook(
+      { toolName: "exec", params: { command: "ls -la" } },
+      { toolName: "exec" }
+    );
+
+    const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    const checks = receiptArgs.checks as Array<Record<string, unknown>>;
+    // Only authority check, no failed invariants
+    expect(checks).toHaveLength(1);
+    expect(checks[0].check_id).toBe("AUTHORITY");
+    expect(checks[0].passed).toBe(true);
+  });
+
+  it("write tool with http URL in content does NOT trigger invariant", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS);
+    // Simulates: regex patterns don't match on write tool file content
+    mockRunAllInvariantChecks.mockReturnValue([]);
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook(
+      {
+        toolName: "write",
+        params: {
+          path: "/tmp/readme.md",
+          content: "Visit https://example.com for docs",
+        },
+      },
+      { toolName: "write" }
+    );
+
+    const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    const checks = receiptArgs.checks as Array<Record<string, unknown>>;
+    // Only authority check — no failed invariants
+    expect(checks).toHaveLength(1);
+    expect(checks[0].check_id).toBe("AUTHORITY");
+    expect(checks[0].passed).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // otelExporter
 // ---------------------------------------------------------------------------
 

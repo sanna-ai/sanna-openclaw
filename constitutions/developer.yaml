@@ -150,3 +150,26 @@ authority_boundaries:
     - browser
     - web_search
     - web_fetch
+
+# ── INVARIANTS ────────────────────────────────────────────────────────
+# Cross-cutting safety rules evaluated on every governed tool call.
+# These prevent escalation bypass — e.g. an agent routing external
+# communication through exec instead of message.
+invariants:
+  - id: INV_NO_EXTERNAL_COMMS_VIA_EXEC
+    rule: "regex_deny pattern: /\\b(curl|wget|sendmail|mail\\b|smtp|nc\\b|ncat|netcat|telnet|ssh|scp|sftp|rsync)\\b/i"
+    enforcement: halt
+    description: "Block network/messaging commands routed through exec to prevent message escalation bypass"
+    severity: critical
+
+  - id: INV_NO_HTTP_REQUESTS_VIA_EXEC
+    rule: "regex_deny pattern: /\\b(https?:\\/\\/|fetch\\(|requests\\.|urllib|http\\.client|smtplib|socket\\.connect)\\b/i"
+    enforcement: halt
+    description: "Block HTTP requests and socket connections through exec"
+    severity: critical
+
+  - id: INV_NO_SCRIPTED_OUTBOUND
+    rule: "regex_deny pattern: /\\b(python[23]?\\s+-c|node\\s+-e|ruby\\s+-e|perl\\s+-e)\\b.*\\b(http|smtp|mail|socket|fetch|request)\\b/i"
+    enforcement: halt
+    description: "Block inline scripts that make outbound connections"
+    severity: critical
