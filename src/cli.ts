@@ -66,7 +66,7 @@ export function registerCli(
         async (opts: Record<string, string>) => {
           try {
             const limit = parseInt(opts.limit ?? "20", 10);
-            const receipts = store.query({ enforcement: true, limit });
+            const receipts = store.query({ limit });
             if (receipts.length === 0) {
               console.log("No recent enforcement decisions.");
               return;
