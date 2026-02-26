@@ -296,7 +296,7 @@ export function registerHooks(
       }
 
       if (decision.decision === "escalate") {
-        const blockMsg = `Requires approval: ${decision.reason} (receipt: ${receiptId})`;
+        const blockMsg = `Sanna requires approval: ${decision.reason} (receipt: ${receiptId})`;
         api.logger.warn(`[sanna] ESCALATE ${toolName}: ${decision.reason}`);
         if (isEnforceMode) {
           return { block: true, blockReason: blockMsg };
@@ -305,7 +305,7 @@ export function registerHooks(
       }
 
       // halt / deny → block
-      const blockMsg = `Blocked by governance: ${decision.reason} (receipt: ${receiptId})`;
+      const blockMsg = `Blocked by Sanna governance: ${decision.reason} (receipt: ${receiptId})`;
       api.logger.warn(`[sanna] DENY ${toolName}: ${decision.reason}`);
       if (isEnforceMode) {
         return { block: true, blockReason: blockMsg };

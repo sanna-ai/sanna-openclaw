@@ -179,7 +179,7 @@ describe("before_tool_call", () => {
     )) as Record<string, unknown>;
 
     expect(result.block).toBe(true);
-    expect(result.blockReason).toContain("Blocked by governance");
+    expect(result.blockReason).toContain("Blocked by Sanna governance");
     expect(result.blockReason).toContain("Tool not allowed");
   });
 
@@ -200,7 +200,7 @@ describe("before_tool_call", () => {
     )) as Record<string, unknown>;
 
     expect(result.block).toBe(true);
-    expect(result.blockReason).toContain("Requires approval");
+    expect(result.blockReason).toContain("Sanna requires approval");
     expect(result.blockReason).toContain("Needs human approval");
   });
 
