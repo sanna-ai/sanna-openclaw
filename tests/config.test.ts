@@ -81,6 +81,20 @@ describe("resolveConfig", () => {
 
     expect(config.privateKeyPath).toBe("/path/to/key.pem");
   });
+
+  it("llmChecks defaults to false", () => {
+    const api = createMockApi();
+    const config = resolveConfig(api);
+
+    expect(config.llmChecks).toBe(false);
+  });
+
+  it("customEvaluatorsPath defaults to empty string", () => {
+    const api = createMockApi();
+    const config = resolveConfig(api);
+
+    expect(config.customEvaluatorsPath).toBe("");
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -16,12 +16,14 @@ vi.mock("../src/http.js", async (importOriginal) => {
 
 const mockLoadConstitution = vi.fn();
 const mockLoadPrivateKey = vi.fn();
+const mockEnableLlmChecks = vi.fn();
 const mockReceiptStoreInstance = { save: vi.fn(), count: vi.fn(), query: vi.fn(), close: vi.fn() };
 vi.mock("@sanna-ai/core", () => ({
   loadConstitution: (...args: unknown[]) => mockLoadConstitution(...args),
   loadPrivateKey: (...args: unknown[]) => mockLoadPrivateKey(...args),
   loadPublicKey: vi.fn(),
   SannaSpanExporter: vi.fn(),
+  enableLlmChecks: (...args: unknown[]) => mockEnableLlmChecks(...args),
   ReceiptStore: vi.fn(() => mockReceiptStoreInstance),
 }));
 
@@ -156,5 +158,74 @@ describe("register — otel config", () => {
     const infoCalls = (api.logger.info as ReturnType<typeof vi.fn>).mock.calls
       .map((c) => c[0] as string);
     expect(infoCalls.some((s) => s.includes("OpenTelemetry"))).toBe(false);
+  });
+});
+
+describe("register — LLM checks", () => {
+  it("enableLlmChecks called when config.llmChecks is true", () => {
+    const api = createMockApi({ llmChecks: true });
+
+    expect(() => register(api)).not.toThrow();
+    expect(mockEnableLlmChecks).toHaveBeenCalledOnce();
+    expect(api.logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("LLM semantic checks enabled")
+    );
+  });
+
+  it("LLM check init failure logs warning", () => {
+    mockEnableLlmChecks.mockImplementation(() => {
+      throw new Error("LLM init failed");
+    });
+    const api = createMockApi({ llmChecks: true });
+
+    expect(() => register(api)).not.toThrow();
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to enable LLM checks")
+    );
+    // Plugin still loads
+    expect(api.logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("Governance plugin loaded")
+    );
+  });
+});
+
+describe("register — custom evaluators", () => {
+  it("custom evaluator module imported from path", () => {
+    // Use a real file that sets a global flag
+    const tmpPath = "/tmp/sanna-test-evaluator-" + Date.now() + ".cjs";
+    const fs = require("fs");
+    fs.writeFileSync(
+      tmpPath,
+      "globalThis.__sanna_custom_eval_loaded = true;\n"
+    );
+
+    try {
+      const api = createMockApi({ customEvaluatorsPath: tmpPath });
+      expect(() => register(api)).not.toThrow();
+      expect(api.logger.info).toHaveBeenCalledWith(
+        expect.stringContaining("Custom evaluators loaded")
+      );
+      expect(
+        (globalThis as Record<string, unknown>).__sanna_custom_eval_loaded
+      ).toBe(true);
+    } finally {
+      fs.unlinkSync(tmpPath);
+      delete (globalThis as Record<string, unknown>).__sanna_custom_eval_loaded;
+    }
+  });
+
+  it("bad custom evaluator path logs warning", () => {
+    const api = createMockApi({
+      customEvaluatorsPath: "/nonexistent/path/evaluators.js",
+    });
+
+    expect(() => register(api)).not.toThrow();
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to load custom evaluators")
+    );
+    // Plugin still loads
+    expect(api.logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("Governance plugin loaded")
+    );
   });
 });

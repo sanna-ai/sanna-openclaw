@@ -5,9 +5,11 @@
  * through the OpenClaw CLI tool.
  */
 
+import { resolve } from "node:path";
+import { existsSync } from "node:fs";
 import type { SannaConfig, PluginAPI } from "./types.js";
 import type { Constitution } from "@sanna-ai/core";
-import { ReceiptStore, verifyReceipt } from "@sanna-ai/core";
+import { ReceiptStore, verifyReceipt, listEvaluators } from "@sanna-ai/core";
 import { readHooksEnabled } from "./http.js";
 import type { KeyObject } from "node:crypto";
 
@@ -292,6 +294,35 @@ export function registerCli(
         // 5. signing + verification combo
         if (deps.publicKey && config.privateKeyPath) {
           console.log("INFO  signing + verification keys configured");
+        }
+
+        // 6. LLM checks
+        console.log(
+          config.llmChecks
+            ? `INFO  LLM checks: enabled${config.llmChecksModel ? ` (model: ${config.llmChecksModel})` : ""}`
+            : "INFO  LLM checks: disabled"
+        );
+
+        // 7. Custom evaluators
+        if (config.customEvaluatorsPath) {
+          const absPath = resolve(config.customEvaluatorsPath);
+          console.log(
+            existsSync(absPath)
+              ? `PASS  custom evaluators: ${absPath}`
+              : `FAIL  custom evaluators not found: ${absPath}`
+          );
+        }
+
+        // 8. Registered evaluators
+        try {
+          const ids = listEvaluators();
+          if (ids.length > 0) {
+            console.log(
+              `INFO  registered evaluators: ${ids.length} (${ids.join(", ")})`
+            );
+          }
+        } catch {
+          /* core version may not have this */
         }
 
         // Summary

@@ -42,12 +42,26 @@
         "type": "string",
         "default": "sanna-openclaw",
         "description": "OpenTelemetry service name for exported spans"
+      },
+      "llmChecks": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable LLM semantic checks for invariant evaluation"
+      },
+      "llmChecksModel": {
+        "type": "string",
+        "description": "Model to use for LLM semantic checks"
+      },
+      "customEvaluatorsPath": {
+        "type": "string",
+        "description": "Path to JS module that registers custom invariant evaluators"
       }
     }
   },
   "uiHints": {
     "constitutionPath": { "label": "Constitution Path", "placeholder": "./constitutions" },
     "privateKeyPath": { "label": "Signing Key Path", "sensitive": true },
-    "enforcementMode": { "label": "Enforcement Mode" }
+    "enforcementMode": { "label": "Enforcement Mode" },
+    "llmChecksModel": { "label": "LLM Check Model", "placeholder": "claude-sonnet-4-5-20250929" }
   }
 }

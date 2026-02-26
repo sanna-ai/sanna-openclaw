@@ -50,6 +50,9 @@ export const DEFAULT_CONFIG: Required<SannaConfig> = {
   enforcementMode: "enforce",
   otelExport: false,
   otelServiceName: "sanna-openclaw",
+  llmChecks: false,
+  llmChecksModel: "",
+  customEvaluatorsPath: "",
 };
 
 // ---------------------------------------------------------------------------
@@ -69,5 +72,9 @@ export function resolveConfig(api: PluginAPI): SannaConfig {
     enforcementMode: raw.enforcementMode ?? DEFAULT_CONFIG.enforcementMode,
     otelExport: raw.otelExport ?? DEFAULT_CONFIG.otelExport,
     otelServiceName: raw.otelServiceName ?? DEFAULT_CONFIG.otelServiceName,
+    llmChecks: raw.llmChecks ?? DEFAULT_CONFIG.llmChecks,
+    llmChecksModel: raw.llmChecksModel ?? DEFAULT_CONFIG.llmChecksModel,
+    customEvaluatorsPath:
+      raw.customEvaluatorsPath ?? DEFAULT_CONFIG.customEvaluatorsPath,
   };
 }

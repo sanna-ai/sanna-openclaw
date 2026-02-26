@@ -15,6 +15,9 @@ export interface SannaConfig {
   enforcementMode?: "enforce" | "audit" | "passthrough";
   otelExport?: boolean;
   otelServiceName?: string;
+  llmChecks?: boolean;
+  llmChecksModel?: string;
+  customEvaluatorsPath?: string;
 }
 
 // ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ const mockVerifyReceipt = vi.fn();
 vi.mock("@sanna-ai/core", () => ({
   ReceiptStore: vi.fn(),
   verifyReceipt: (...args: unknown[]) => mockVerifyReceipt(...args),
+  listEvaluators: () => [],
 }));
 
 vi.mock("../src/http.js", () => ({

@@ -22,6 +22,7 @@ import {
   loadPublicKey,
   ReceiptStore,
   SannaSpanExporter,
+  enableLlmChecks,
 } from "@sanna-ai/core";
 import type { Constitution } from "@sanna-ai/core";
 import { registerHooks } from "./hooks.js";
@@ -181,6 +182,34 @@ export default function register(api: PluginAPI): void {
       api.logger.warn(
         "[sanna] otelExport enabled but @opentelemetry/api not available. Install it as a dependency."
       );
+    }
+  }
+
+  // Enable LLM semantic checks (optional)
+  if (config.llmChecks) {
+    try {
+      const opts: Record<string, unknown> = {};
+      if (config.llmChecksModel) opts.model = config.llmChecksModel;
+      enableLlmChecks(opts);
+      api.logger.info("[sanna] LLM semantic checks enabled.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      api.logger.warn(`[sanna] Failed to enable LLM checks: ${msg}`);
+      // Non-fatal — LLM checks are additive, not required
+    }
+  }
+
+  // Load custom evaluators (optional)
+  if (config.customEvaluatorsPath) {
+    try {
+      const absPath = resolve(config.customEvaluatorsPath);
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require(absPath);
+      api.logger.info(`[sanna] Custom evaluators loaded from ${absPath}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      api.logger.warn(`[sanna] Failed to load custom evaluators: ${msg}`);
+      // Non-fatal
     }
   }
 
