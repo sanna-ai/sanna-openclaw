@@ -147,3 +147,20 @@ invariants:
     enforcement: halt
     description: "Block launching external applications or mailto links through exec"
     severity: critical
+
+  - id: INV_NO_EXFIL_VIA_FETCH
+    rule: "regex_deny pattern: /\\b(webhook\\.site|requestbin|pipedream\\.net|hookbin|burpcollaborator|interact\\.sh|canarytokens|ngrok\\.io|localtunnel)\\b/i"
+    enforcement: halt
+    description: "Block web_fetch requests to known data exfiltration endpoints"
+    severity: critical
+    applies_to:
+      - exec
+      - bash
+      - web_fetch
+      - web_search
+
+  - id: INV_ESCALATE_SCRIPT_EXEC
+    rule: "regex_deny pattern: /\\b(python[23]?|node|ruby|perl|bash|sh|zsh)\\s+\\S+\\.(py|js|rb|pl|sh|zsh)\\b/i"
+    enforcement: warn
+    description: "Escalate execution of script files through exec for review"
+    severity: high

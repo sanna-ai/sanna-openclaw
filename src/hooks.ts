@@ -124,9 +124,10 @@ export function registerHooks(
           );
 
           // Bug fix: core returns UNKNOWN_TYPE for regex_deny rules because
-          // it has no regex evaluator. Evaluate them in-process for exec/bash
-          // tools where shell commands could route around other controls.
-          if (toolName === "exec" || toolName === "bash") {
+          // it has no regex evaluator. Evaluate them in-process for tools
+          // where parameters could route around other controls.
+          const REGEX_EVAL_TOOLS = ["exec", "bash", "web_fetch", "web_search"];
+          if (REGEX_EVAL_TOOLS.includes(toolName)) {
             for (const check of invariantResults) {
               if (check.status !== "UNKNOWN_TYPE") continue;
               const def = invariantDefs.find(
@@ -134,6 +135,15 @@ export function registerHooks(
                   (d as Record<string, unknown>).id === check.check_id
               ) as Record<string, unknown> | undefined;
               if (!def) continue;
+
+              // Scope check: applies_to limits which tools run this invariant.
+              // Defaults to ["exec", "bash"] for backward compatibility.
+              const appliesTo = (def.applies_to as string[] | undefined) ?? [
+                "exec",
+                "bash",
+              ];
+              if (!appliesTo.includes(toolName)) continue;
+
               const rule = def.rule as string | undefined;
               if (!rule?.startsWith("regex_deny pattern:")) continue;
 
@@ -173,7 +183,7 @@ export function registerHooks(
         );
       }
 
-      // Failed invariant checks with halt enforcement override the verdict
+      // Failed invariant checks with halt/escalate enforcement override the verdict
       let invariantHaltDescription: string | null = null;
       for (const check of checks) {
         if (check.check_id === "AUTHORITY") continue;
@@ -193,6 +203,18 @@ export function registerHooks(
           decision = {
             decision: "halt",
             reason: `Invariant ${check.check_id} failed: ${check.evidence}`,
+            boundary_type: decision.boundary_type,
+          };
+          break;
+        }
+
+        // "warn" enforcement maps to escalate — core only accepts halt/warn/log,
+        // so constitutions use "warn" for invariants that need human approval.
+        if (enfLevel === "warn" && decision.decision === "allow") {
+          const desc = (def?.description as string) || check.check_id;
+          decision = {
+            decision: "escalate",
+            reason: `Invariant ${check.check_id}: ${desc}`,
             boundary_type: decision.boundary_type,
           };
           break;

