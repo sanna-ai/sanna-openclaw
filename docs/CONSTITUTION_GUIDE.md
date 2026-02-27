@@ -337,7 +337,7 @@ Start from the template closest to your needs and modify it.
 ### Step 1: Copy a template
 
 ```bash
-cp constitutions/openclaw-developer.yaml constitutions/active.yaml
+cp constitutions/developer.yaml constitutions/active.yaml
 ```
 
 ### Step 2: Update identity

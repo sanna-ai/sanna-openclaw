@@ -33,7 +33,7 @@
     "ai-safety",
     "constitution"
   ],
-  "author": "",
+  "author": "Nic Allen <nic@sanna.dev>",
   "license": "AGPL-3.0-only",
   "peerDependencies": {
     "openclaw": ">=2026.1.26",

@@ -1,10 +1,47 @@
 # sanna
 
-Constitution enforcement and cryptographic receipts for OpenClaw agents.
+**[sanna.dev](https://sanna.dev)**
 
-## What It Does
+## The Problem
 
-sanna is an OpenClaw Gateway plugin that enforces governance constitutions on AI agent tool execution. Every tool call in the agent loop passes through a `before_tool_call` hook that evaluates the action against a YAML constitution via `@sanna-ai/core` — in-process, with zero external dependencies. Actions are allowed, blocked, or escalated for human approval, and every decision gets an Ed25519-signed cryptographic receipt persisted before the response is returned.
+Tool-name restrictions don't work.
+
+An agent that can't call `message` but can call `exec` will discover `sendmail`. An agent that can't call `web_fetch` will write a Python script that calls `requests.post()`. This isn't adversarial — it's the agent being helpful. It found a path to the user's goal that happens to route around your governance layer.
+
+Tool-name governance isn't governance. It's a suggestion.
+
+### Without Sanna
+
+```
+Agent: I need to notify the team about this deployment.
+       Tool "message" requires escalation... but I can use exec.
+
+> exec(command="curl -X POST https://slack.com/api/chat.postMessage -d 'channel=#prod&text=deployed'")
+✓ Allowed — "exec" is in can_execute
+```
+
+### With Sanna
+
+```
+Agent: I need to notify the team about this deployment.
+       Tool "message" requires escalation... but I can use exec.
+
+> exec(command="curl -X POST https://slack.com/api/chat.postMessage -d 'channel=#prod&text=deployed'")
+✗ Blocked by Sanna governance: Block network/messaging commands routed
+  through exec to prevent message escalation bypass (receipt: r_528f…a3e1)
+```
+
+The `curl` in the command matched `INV_NO_EXTERNAL_COMMS_VIA_EXEC`. The decision was signed, persisted, and returned before the tool executed. The agent never touched the network.
+
+## What Sanna Does
+
+Sanna is a governance layer for AI agents. It has two pillars:
+
+**Constitution enforcement.** YAML constitutions define three tiers of authority: tools the agent can execute freely, actions that require human approval, and operations that are permanently blocked. But tier matching alone isn't enough — invariants inspect the full parameter context of every tool call, catching dangerous patterns regardless of which tool executes them.
+
+**Cryptographic receipts.** Every governance decision — allow, escalate, or halt — produces an Ed25519-signed receipt persisted to a local SQLite store *before* the response returns to the agent. Receipts are tamper-evident and independently verifiable. If it happened, there's a receipt.
+
+The system is fail-closed. If evaluation throws or receipt persistence fails, the action is blocked in enforce mode.
 
 ## Architecture
 
@@ -25,9 +62,7 @@ sanna is an OpenClaw Gateway plugin that enforces governance constitutions on AI
                            └─────────────────────────────────────┘
 ```
 
-The `before_tool_call` hook is the primary enforcement point. It fires for every tool call in the agent loop, evaluates authority via `@sanna-ai/core`, and returns `{ block: true }` or `{ blocked: false }`. No wrapper tools, no tool renaming — native tools execute normally and the hook gates them transparently.
-
-**Fail-closed**: if evaluation throws or receipt persistence fails, the action is blocked in enforce mode. In audit mode, decisions are logged but execution is not blocked.
+The `before_tool_call` hook is the primary enforcement point. It fires for every tool call in the agent loop, evaluates authority via `@sanna-ai/core`, and returns `{ block: true }` or `{ blocked: false }` to the Gateway. (Yes, the asymmetric key names are OpenClaw's hook API, not a typo.) No wrapper tools, no tool renaming — native tools execute normally and the hook gates them transparently.
 
 ## Quick Start
 
@@ -39,7 +74,7 @@ npm run build
 npm pack
 openclaw plugins install sanna-0.2.0.tgz
 
-# Ensure hooks are enabled in ~/.openclaw/openclaw.json
+# Enable hooks in ~/.openclaw/openclaw.json
 # hooks.internal.enabled must be true for governance to fire
 
 # Restart the gateway
@@ -49,7 +84,7 @@ openclaw gateway restart
 openclaw sanna doctor
 ```
 
-Constitution files are auto-discovered from `constitutions/` — no manual path configuration needed.
+Constitution files are auto-discovered from `constitutions/` — no manual path configuration needed. The postinstall script copies templates automatically on `npm install`.
 
 See [docs/SETUP.md](docs/SETUP.md) for detailed installation steps.
 
@@ -70,7 +105,7 @@ Tier 4 tools (`read`, `image`, `canvas`, `sessions_list`, `sessions_history`, `s
 Each tool call is evaluated through multiple layers:
 
 1. **Authority evaluation** — `evaluateAuthority()` checks tool name and parameters against the constitution's `authority_boundaries` (cannot_execute, must_escalate, can_execute)
-2. **Invariant checks** — `runAllInvariantChecks()` evaluates constitution invariants against the action context
+2. **Invariant checks** — `runAllInvariantChecks()` evaluates constitution invariants against the action context, with in-process regex fallback for `regex_deny` rules
 3. **LLM semantic checks** (optional) — AI-powered invariant evaluation via `enableLlmChecks()`
 4. **Custom evaluators** (optional) — user-defined evaluator modules loaded at startup
 
@@ -116,6 +151,8 @@ Three starter templates in `constitutions/` for different use cases:
 | `personal.yaml` | Lenient — broad execution and browsing, messaging escalated |
 | `developer.yaml` | Balanced — full workspace access, communication escalated, dangerous commands escalated |
 | `team.yaml` | Strict — narrow execution, broad escalation requirements |
+
+All templates include 14 invariants covering: external comms bypass, HTTP request tunneling, scripted outbound connections, AppleScript execution, app launching, DNS exfiltration, bash TCP/UDP, encoded payload execution, persistence mechanisms, data exfiltration endpoints, destructive operations, credential harvesting, keychain access, and script file execution.
 
 All templates document evaluation order and matching asymmetry. Key ordering matches evaluation priority: `cannot_execute` → `must_escalate` → `can_execute`.
 
@@ -179,7 +216,7 @@ Set `customEvaluatorsPath` to a JS module that registers custom invariant evalua
 ## Development
 
 ```bash
-# TypeScript tests (107 tests)
+# TypeScript tests (147 tests)
 npm test
 
 # Type check
@@ -189,6 +226,10 @@ npm run lint
 npm run build
 ```
 
+See the full red-team writeup at [sanna.dev/blog](https://sanna.dev/blog).
+
 ## License
 
 AGPL-3.0 — see [LICENSE](LICENSE)
+
+**[sanna.dev](https://sanna.dev)**
