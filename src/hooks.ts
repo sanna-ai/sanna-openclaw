@@ -126,7 +126,7 @@ export function registerHooks(
           // Bug fix: core returns UNKNOWN_TYPE for regex_deny rules because
           // it has no regex evaluator. Evaluate them in-process for tools
           // where parameters could route around other controls.
-          const REGEX_EVAL_TOOLS = ["exec", "bash", "web_fetch", "web_search"];
+          const REGEX_EVAL_TOOLS = ["exec", "bash", "read", "write", "web_fetch", "web_search", "browser"];
           if (REGEX_EVAL_TOOLS.includes(toolName)) {
             for (const check of invariantResults) {
               if (check.status !== "UNKNOWN_TYPE") continue;
