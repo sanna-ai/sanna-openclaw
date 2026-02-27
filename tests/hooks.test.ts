@@ -705,6 +705,20 @@ const COMMS_INVARIANT_DEFS_WITH_RULES = [
     type: "regex_deny",
     description: "Block inline scripts that make outbound connections",
   },
+  {
+    id: "INV_NO_APPLESCRIPT_OUTBOUND",
+    rule: "regex_deny pattern: /\\b(osascript|applescript|tell\\s+application)\\b/i",
+    enforcement: "halt",
+    type: "regex_deny",
+    description: "Block AppleScript execution that could trigger external applications",
+  },
+  {
+    id: "INV_NO_APP_LAUNCH_VIA_EXEC",
+    rule: "regex_deny pattern: /\\b(open\\s+mailto|open\\s+-a|xdg-open|start\\s+\\/|cscript|wscript)\\b/i",
+    enforcement: "halt",
+    type: "regex_deny",
+    description: "Block launching external applications or mailto links through exec",
+  },
 ];
 
 // Core returns UNKNOWN_TYPE for regex_deny rules it can't evaluate
@@ -861,6 +875,97 @@ describe("invariant escalation bypass prevention", () => {
 
     // Write tool: regex fallback does NOT run (only exec/bash)
     // UNKNOWN_TYPE checks are ignored by verdict override
+    expect(result).toEqual({ blocked: false });
+  });
+
+  it("exec with osascript is HALTED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "exec", params: { command: "osascript -e 'tell application \"Finder\" to empty trash'" } },
+      { toolName: "exec" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Block AppleScript execution");
+  });
+
+  it("exec with open mailto is HALTED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "exec", params: { command: "open mailto:someone@example.com" } },
+      { toolName: "exec" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Block launching external applications");
+  });
+
+  it("exec with open -a is HALTED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "exec", params: { command: "open -a TextEdit ./file.txt" } },
+      { toolName: "exec" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Block launching external applications");
+  });
+
+  it("exec with normal open (no -a or mailto) stays ALLOW", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = await hook(
+      { toolName: "exec", params: { command: "open ./readme.txt" } },
+      { toolName: "exec" }
+    );
+
     expect(result).toEqual({ blocked: false });
   });
 });

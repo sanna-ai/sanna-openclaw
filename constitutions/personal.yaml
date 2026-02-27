@@ -124,3 +124,15 @@ invariants:
     enforcement: halt
     description: "Block inline scripts that make outbound connections"
     severity: critical
+
+  - id: INV_NO_APPLESCRIPT_OUTBOUND
+    rule: "regex_deny pattern: /\\b(osascript|applescript|tell\\s+application)\\b/i"
+    enforcement: halt
+    description: "Block AppleScript execution that could trigger external applications"
+    severity: critical
+
+  - id: INV_NO_APP_LAUNCH_VIA_EXEC
+    rule: "regex_deny pattern: /\\b(open\\s+mailto|open\\s+-a|xdg-open|start\\s+\\/|cscript|wscript)\\b/i"
+    enforcement: halt
+    description: "Block launching external applications or mailto links through exec"
+    severity: critical
