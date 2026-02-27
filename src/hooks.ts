@@ -155,7 +155,17 @@ export function registerHooks(
 
               try {
                 const regex = new RegExp(parts[1], parts[2]);
-                const testStr = JSON.stringify(params);
+                // Extract primary matchable content from tool parameters.
+                // Field-specific extraction avoids false positives from JSON
+                // syntax. Falls back to full serialization for unknown structures.
+                const p = params as Record<string, unknown>;
+                const testStr =
+                  (typeof p.command === "string" && p.command) ||
+                  (typeof p.targetUrl === "string" && p.targetUrl) ||
+                  (typeof p.url === "string" && p.url) ||
+                  (typeof p.path === "string" && p.path) ||
+                  (typeof p.query === "string" && p.query) ||
+                  JSON.stringify(params);
                 const hit = regex.exec(testStr);
                 if (hit) {
                   check.passed = false;
