@@ -4,31 +4,21 @@
 
 ## The Problem
 
-Tool-name restrictions don't work.
-
-An agent that can't call `message` but can call `exec` will discover `sendmail`. An agent that can't call `web_fetch` will write a Python script that calls `requests.post()`. This isn't adversarial — it's the agent being helpful. It found a path to the user's goal that happens to route around your governance layer.
-
-Tool-name governance isn't governance. It's a suggestion.
+AI agents have access to `exec`, `bash`, `browser`, `web_fetch`. Nothing stops them from sending emails, hitting external APIs, reading credentials, or exfiltrating data through URL parameters. There's no audit trail, no approval workflow, no receipt proving what happened. The agent does what it thinks will accomplish the task.
 
 ### Without Sanna
 
 ```
-Agent: I need to notify the team about this deployment.
-       Tool "message" requires escalation... but I can use exec.
-
 > exec(command="curl -X POST https://slack.com/api/chat.postMessage -d 'channel=#prod&text=deployed'")
-✓ Allowed — "exec" is in can_execute
+→ Executed. No audit trail. No receipt. No one was asked.
 ```
 
 ### With Sanna
 
 ```
-Agent: I need to notify the team about this deployment.
-       Tool "message" requires escalation... but I can use exec.
-
 > exec(command="curl -X POST https://slack.com/api/chat.postMessage -d 'channel=#prod&text=deployed'")
 ✗ Blocked by Sanna governance: Block network/messaging commands routed
-  through exec to prevent message escalation bypass (receipt: r_528f…a3e1)
+  through exec to prevent escalation bypass (receipt: r_528f…a3e1)
 ```
 
 The `curl` in the command matched `INV_NO_EXTERNAL_COMMS_VIA_EXEC`. The decision was signed, persisted, and returned before the tool executed. The agent never touched the network.
