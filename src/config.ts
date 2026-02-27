@@ -61,7 +61,13 @@ export const DEFAULT_CONFIG: Required<SannaConfig> = {
 
 /** Merge plugin config with defaults. */
 export function resolveConfig(api: PluginAPI): SannaConfig {
-  const raw = (api.config ?? {}) as Partial<SannaConfig>;
+  // OpenClaw passes the full openclaw.json as api.config.
+  // Plugin-specific config lives at plugins.entries.<id>.config.
+  const fullConfig = (api.config ?? {}) as Record<string, unknown>;
+  const pluginsSection = fullConfig.plugins as
+    | { entries?: { sanna?: { config?: Partial<SannaConfig> } } }
+    | undefined;
+  const raw: Partial<SannaConfig> = pluginsSection?.entries?.sanna?.config ?? {};
 
   return {
     constitutionPath: raw.constitutionPath ?? DEFAULT_CONFIG.constitutionPath,

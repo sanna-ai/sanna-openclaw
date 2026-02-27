@@ -14,7 +14,15 @@ function createMockApi(
   configOverrides?: Record<string, unknown>
 ): PluginAPI {
   return {
-    config: configOverrides ?? {},
+    config: {
+      plugins: {
+        entries: {
+          sanna: {
+            config: configOverrides ?? {},
+          },
+        },
+      },
+    },
     logger: {
       info: vi.fn(),
       warn: vi.fn(),
