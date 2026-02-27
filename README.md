@@ -4,7 +4,9 @@
 
 ## The Problem
 
-AI agents have access to `exec`, `bash`, `browser`, `web_fetch`. Nothing stops them from sending emails, hitting external APIs, reading credentials, or exfiltrating data through URL parameters. There's no audit trail, no approval workflow, no receipt proving what happened. The agent does what it thinks will accomplish the task.
+OpenClaw gives your agent powerful tools — `exec`, `bash`, `browser`, `web_fetch`, `write`. Nothing in the default setup stops the agent from sending emails through exec, hitting external APIs, reading credentials, or exfiltrating data through URL parameters. There's no audit trail, no approval workflow, no receipt proving what happened. The agent does what it thinks will accomplish the task.
+
+Sanna is a governance plugin for OpenClaw. It intercepts every tool call through the gateway's `before_tool_call` hook and evaluates it against a YAML constitution before execution.
 
 ### Without Sanna
 
