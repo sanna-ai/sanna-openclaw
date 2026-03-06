@@ -18,6 +18,12 @@ const mockLoadConstitution = vi.fn();
 const mockLoadPrivateKey = vi.fn();
 const mockEnableLlmChecks = vi.fn();
 const mockReceiptStoreInstance = { save: vi.fn(), count: vi.fn(), query: vi.fn(), close: vi.fn() };
+const mockLocalSQLiteSinkInstance = {
+  store: vi.fn(async () => ({ success: true })),
+  getStore: vi.fn(() => mockReceiptStoreInstance),
+  flush: vi.fn(async () => {}),
+  close: vi.fn(async () => {}),
+};
 vi.mock("@sanna-ai/core", () => ({
   loadConstitution: (...args: unknown[]) => mockLoadConstitution(...args),
   loadPrivateKey: (...args: unknown[]) => mockLoadPrivateKey(...args),
@@ -25,12 +31,8 @@ vi.mock("@sanna-ai/core", () => ({
   SannaSpanExporter: vi.fn(),
   enableLlmChecks: (...args: unknown[]) => mockEnableLlmChecks(...args),
   ReceiptStore: vi.fn(() => mockReceiptStoreInstance),
-}));
-
-const mockSinkInstance = { save: vi.fn(() => ({ success: true })), count: vi.fn(() => 0), query: vi.fn(() => []), close: vi.fn() };
-vi.mock("../src/sink.js", () => ({
-  LocalSQLiteSink: vi.fn(() => mockSinkInstance),
-  NullSink: vi.fn(() => mockSinkInstance),
+  LocalSQLiteSink: vi.fn(() => mockLocalSQLiteSinkInstance),
+  NullSink: vi.fn(() => ({ store: vi.fn(async () => ({ success: true })), flush: vi.fn(), close: vi.fn() })),
 }));
 
 vi.mock("../src/hooks.js", () => ({ registerHooks: vi.fn() }));

@@ -15,6 +15,7 @@ import type {
   Constitution,
   AuthorityDecision,
   CheckResult,
+  ReceiptSink,
 } from "@sanna-ai/core";
 import {
   evaluateAuthority,
@@ -24,7 +25,6 @@ import {
   runAllInvariantChecks,
 } from "@sanna-ai/core";
 import type { KeyObject } from "node:crypto";
-import type { ReceiptSink } from "./sink.js";
 
 export interface OtelExporter {
   exportReceipt(receipt: Record<string, unknown>): void;
@@ -254,20 +254,10 @@ export function registerHooks(
         coverage_pct: checks.length > 0 ? 100 : 0,
       };
 
-      // Build receipt chaining: parent_receipts from prior receipt
+      // Receipt chaining: parent_receipts from prior receipt fingerprint
       const parentReceipts = lastReceipt?.fingerprint
         ? [lastReceipt.fingerprint]
         : [];
-
-      // Build extensions with v1.0 metadata
-      const extensions: Record<string, unknown> = {
-        workflow_id: workflowId,
-        parent_receipts: parentReceipts,
-      };
-      if (config.contentMode && config.contentMode !== "full") {
-        extensions.content_mode = config.contentMode;
-        extensions.content_mode_source = "local_config";
-      }
 
       // Generate receipt for EVERY decision
       const correlationId = `${toolName}-${Date.now()}`;
@@ -299,7 +289,10 @@ export function registerHooks(
             timestamp: new Date().toISOString(),
           },
           evaluation_coverage,
-          extensions,
+          parent_receipts: parentReceipts,
+          workflow_id: workflowId,
+          content_mode: config.contentMode && config.contentMode !== "full" ? config.contentMode : undefined,
+          content_mode_source: config.contentMode && config.contentMode !== "full" ? "local_config" : undefined,
         }) as unknown as Record<string, unknown>;
 
         if (privateKey) {
@@ -307,9 +300,9 @@ export function registerHooks(
         }
 
         // Write-ahead: persist BEFORE returning verdict
-        const sinkResult = sink.save(receipt);
+        const sinkResult = await sink.store(receipt as Parameters<typeof sink.store>[0]);
         if (!sinkResult.success) {
-          throw new Error(sinkResult.error ?? "Sink save failed");
+          throw new Error(sinkResult.error ?? "Sink store failed");
         }
 
         // Fire-and-forget OTel export after successful persistence

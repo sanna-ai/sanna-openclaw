@@ -60,12 +60,12 @@ const fakeDeps: GatewayDeps = {
     authority_boundaries: null,
     trusted_sources: null,
   } as GatewayDeps["constitution"],
-  sink: {
+  store: {
     count: mockStoreCount,
     query: mockStoreQuery,
     save: vi.fn(),
     close: vi.fn(),
-  } as unknown as GatewayDeps["sink"],
+  } as unknown as GatewayDeps["store"],
 };
 
 beforeEach(() => {

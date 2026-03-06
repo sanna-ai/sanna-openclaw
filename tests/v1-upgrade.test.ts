@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { PluginAPI, SannaConfig } from "../src/types.js";
 import type { HookDeps } from "../src/hooks.js";
-import type { ReceiptSink, SinkResult } from "../src/sink.js";
+import type { ReceiptSink, SinkResult } from "@sanna-ai/core";
 
 // ---------------------------------------------------------------------------
 // Mock @sanna-ai/core
@@ -26,14 +26,14 @@ vi.mock("@sanna-ai/core", () => ({
   runAllInvariantChecks: (...args: unknown[]) =>
     mockRunAllInvariantChecks(...args),
   ReceiptStore: vi.fn(),
+  LocalSQLiteSink: vi.fn(),
+  NullSink: vi.fn(),
+  CompositeSink: vi.fn(),
+  SPEC_VERSION: "1.1",
+  CHECKS_VERSION: "6",
 }));
 
 import { registerHooks } from "../src/hooks.js";
-import {
-  LocalSQLiteSink,
-  NullSink,
-  CompositeSink,
-} from "../src/sink.js";
 import { resolveConfig, DEFAULT_CONFIG } from "../src/config.js";
 
 // ---------------------------------------------------------------------------
@@ -84,13 +84,10 @@ function createMockSink(): ReceiptSink & { _saved: Record<string, unknown>[] } {
   const saved: Record<string, unknown>[] = [];
   return {
     _saved: saved,
-    save: vi.fn((receipt: Record<string, unknown>): SinkResult => {
-      saved.push(receipt);
+    store: vi.fn(async (receipt: unknown): Promise<SinkResult> => {
+      saved.push(receipt as Record<string, unknown>);
       return { success: true };
     }),
-    query: vi.fn(() => []),
-    count: vi.fn(() => 0),
-    close: vi.fn(),
   };
 }
 
@@ -154,8 +151,8 @@ describe("OC1: @sanna-ai/core v1.0.0 dependency", () => {
 // OC2: ReceiptSink integration
 // ---------------------------------------------------------------------------
 
-describe("OC2: ReceiptSink replaces ReceiptStore", () => {
-  it("hooks use sink.save() instead of store.save()", async () => {
+describe("OC2: ReceiptSink from @sanna-ai/core", () => {
+  it("hooks use sink.store() from core", async () => {
     const sink = createMockSink();
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps({ sink }));
@@ -163,12 +160,12 @@ describe("OC2: ReceiptSink replaces ReceiptStore", () => {
     const hook = api._hooks.get("before_tool_call")!;
     await hook({ toolName: "exec", params: {} });
 
-    expect(sink.save).toHaveBeenCalledOnce();
+    expect(sink.store).toHaveBeenCalledOnce();
   });
 
-  it("sink save returning failure blocks in enforce mode", async () => {
+  it("sink store returning failure blocks in enforce mode", async () => {
     const sink = createMockSink();
-    (sink.save as ReturnType<typeof vi.fn>).mockReturnValue({
+    (sink.store as ReturnType<typeof vi.fn>).mockResolvedValue({
       success: false,
       error: "Disk full",
     });
@@ -183,70 +180,59 @@ describe("OC2: ReceiptSink replaces ReceiptStore", () => {
     );
   });
 
-  it("NullSink save always succeeds", () => {
-    const sink = new NullSink();
-    const result = sink.save({ receipt_id: "test" });
-    expect(result.success).toBe(true);
+  it("sink.store() is called with receipt object", async () => {
+    const sink = createMockSink();
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps({ sink }));
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook({ toolName: "exec", params: {} });
+
+    const storedReceipt = (sink.store as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(storedReceipt).toHaveProperty("receipt_id", "r-v1-test");
   });
 
-  it("NullSink query returns empty array", () => {
-    const sink = new NullSink();
-    expect(sink.query({})).toEqual([]);
-  });
-
-  it("NullSink count returns zero", () => {
-    const sink = new NullSink();
-    expect(sink.count()).toBe(0);
-  });
-
-  it("CompositeSink fans out to all child sinks", () => {
-    const s1 = createMockSink();
-    const s2 = createMockSink();
-    const composite = new CompositeSink([s1, s2]);
-
-    const receipt = { receipt_id: "test-comp" };
-    const result = composite.save(receipt);
-
-    expect(result.success).toBe(true);
-    expect(s1.save).toHaveBeenCalledWith(receipt);
-    expect(s2.save).toHaveBeenCalledWith(receipt);
-  });
-
-  it("CompositeSink fail_closed fails if any child fails", () => {
-    const s1 = createMockSink();
-    const s2 = createMockSink();
-    (s2.save as ReturnType<typeof vi.fn>).mockReturnValue({
-      success: false,
-      error: "s2 failed",
+  it("sink.store() is awaited (async persistence)", async () => {
+    let resolved = false;
+    const sink = createMockSink();
+    (sink.store as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      await new Promise((r) => setTimeout(r, 10));
+      resolved = true;
+      return { success: true };
     });
-    const composite = new CompositeSink([s1, s2], "fail_closed");
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps({ sink }));
 
-    const result = composite.save({ receipt_id: "test" });
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("s2 failed");
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook({ toolName: "exec", params: {} });
+
+    expect(resolved).toBe(true);
   });
 
-  it("CompositeSink fail_open succeeds even if child fails", () => {
-    const s1 = createMockSink();
-    const s2 = createMockSink();
-    (s2.save as ReturnType<typeof vi.fn>).mockReturnValue({
-      success: false,
-      error: "s2 failed",
-    });
-    const composite = new CompositeSink([s1, s2], "fail_open");
+  it("sink.store() rejection blocks in enforce mode", async () => {
+    const sink = createMockSink();
+    (sink.store as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Connection refused"));
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps({ sink }));
 
-    const result = composite.save({ receipt_id: "test" });
-    expect(result.success).toBe(true);
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = await hook({ toolName: "exec", params: {} });
+
+    expect(result).toEqual(
+      expect.objectContaining({ block: true })
+    );
   });
 
-  it("CompositeSink close calls close on all children", () => {
-    const s1 = createMockSink();
-    const s2 = createMockSink();
-    const composite = new CompositeSink([s1, s2]);
-    composite.close();
+  it("sink.store() rejection in audit mode does not block", async () => {
+    const sink = createMockSink();
+    (sink.store as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Connection refused"));
+    const api = createMockApi();
+    registerHooks(api, { ...ENFORCE_CONFIG, enforcementMode: "audit" }, createDeps({ sink }));
 
-    expect(s1.close).toHaveBeenCalledOnce();
-    expect(s2.close).toHaveBeenCalledOnce();
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = await hook({ toolName: "exec", params: {} });
+
+    expect(result).toBeUndefined();
   });
 });
 
@@ -284,7 +270,7 @@ describe("OC4: Receipt chaining", () => {
 
     expect(mockGenerateReceipt).toHaveBeenCalledOnce();
     const params = mockGenerateReceipt.mock.calls[0][0];
-    expect(params.extensions.parent_receipts).toEqual([]);
+    expect(params.parent_receipts).toEqual([]);
   });
 
   it("second receipt chains to first via parent_receipts", async () => {
@@ -297,15 +283,13 @@ describe("OC4: Receipt chaining", () => {
 
     const hook = api._hooks.get("before_tool_call")!;
     await hook({ toolName: "exec", params: {} });
-    // After after_tool_call, lastReceipt is cleared, but before a new
-    // before_tool_call, it should still have the fingerprint
     await hook({ toolName: "write", params: {} });
 
     const secondCall = mockGenerateReceipt.mock.calls[1][0];
-    expect(secondCall.extensions.parent_receipts).toEqual(["fp-1"]);
+    expect(secondCall.parent_receipts).toEqual(["fp-1"]);
   });
 
-  it("workflow_id is set in extensions", async () => {
+  it("workflow_id is set as top-level ReceiptParams field", async () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps({ workflowId: "wf-test-123" }));
 
@@ -313,7 +297,7 @@ describe("OC4: Receipt chaining", () => {
     await hook({ toolName: "exec", params: {} });
 
     const params = mockGenerateReceipt.mock.calls[0][0];
-    expect(params.extensions.workflow_id).toBe("wf-test-123");
+    expect(params.workflow_id).toBe("wf-test-123");
   });
 
   it("workflow_id auto-generated when not provided", async () => {
@@ -324,9 +308,9 @@ describe("OC4: Receipt chaining", () => {
     await hook({ toolName: "exec", params: {} });
 
     const params = mockGenerateReceipt.mock.calls[0][0];
-    expect(params.extensions.workflow_id).toBeDefined();
-    expect(typeof params.extensions.workflow_id).toBe("string");
-    expect(params.extensions.workflow_id.length).toBeGreaterThan(0);
+    expect(params.workflow_id).toBeDefined();
+    expect(typeof params.workflow_id).toBe("string");
+    expect(params.workflow_id.length).toBeGreaterThan(0);
   });
 
   it("workflow_id stays consistent across multiple calls", async () => {
@@ -341,8 +325,8 @@ describe("OC4: Receipt chaining", () => {
     await hook({ toolName: "exec", params: {} });
     await hook({ toolName: "write", params: {} });
 
-    const wf1 = mockGenerateReceipt.mock.calls[0][0].extensions.workflow_id;
-    const wf2 = mockGenerateReceipt.mock.calls[1][0].extensions.workflow_id;
+    const wf1 = mockGenerateReceipt.mock.calls[0][0].workflow_id;
+    const wf2 = mockGenerateReceipt.mock.calls[1][0].workflow_id;
     expect(wf1).toBe(wf2);
   });
 });
@@ -352,7 +336,7 @@ describe("OC4: Receipt chaining", () => {
 // ---------------------------------------------------------------------------
 
 describe("OC5: Content mode", () => {
-  it("content_mode omitted from extensions when set to full", async () => {
+  it("content_mode omitted when set to full", async () => {
     const api = createMockApi();
     registerHooks(api, { ...ENFORCE_CONFIG, contentMode: "full" }, createDeps());
 
@@ -360,11 +344,11 @@ describe("OC5: Content mode", () => {
     await hook({ toolName: "exec", params: {} });
 
     const params = mockGenerateReceipt.mock.calls[0][0];
-    expect(params.extensions.content_mode).toBeUndefined();
-    expect(params.extensions.content_mode_source).toBeUndefined();
+    expect(params.content_mode).toBeUndefined();
+    expect(params.content_mode_source).toBeUndefined();
   });
 
-  it("content_mode set in extensions when redacted", async () => {
+  it("content_mode set as top-level field when redacted", async () => {
     const api = createMockApi();
     registerHooks(api, { ...ENFORCE_CONFIG, contentMode: "redacted" }, createDeps());
 
@@ -372,20 +356,20 @@ describe("OC5: Content mode", () => {
     await hook({ toolName: "exec", params: {} });
 
     const params = mockGenerateReceipt.mock.calls[0][0];
-    expect(params.extensions.content_mode).toBe("redacted");
-    expect(params.extensions.content_mode_source).toBe("local_config");
+    expect(params.content_mode).toBe("redacted");
+    expect(params.content_mode_source).toBe("local_config");
   });
 
-  it("content_mode set in extensions when hash_only", async () => {
+  it("content_mode set as top-level field when hashes_only", async () => {
     const api = createMockApi();
-    registerHooks(api, { ...ENFORCE_CONFIG, contentMode: "hash_only" }, createDeps());
+    registerHooks(api, { ...ENFORCE_CONFIG, contentMode: "hashes_only" }, createDeps());
 
     const hook = api._hooks.get("before_tool_call")!;
     await hook({ toolName: "exec", params: {} });
 
     const params = mockGenerateReceipt.mock.calls[0][0];
-    expect(params.extensions.content_mode).toBe("hash_only");
-    expect(params.extensions.content_mode_source).toBe("local_config");
+    expect(params.content_mode).toBe("hashes_only");
+    expect(params.content_mode_source).toBe("local_config");
   });
 
   it("content_mode omitted when config not set", async () => {
@@ -396,22 +380,22 @@ describe("OC5: Content mode", () => {
     await hook({ toolName: "exec", params: {} });
 
     const params = mockGenerateReceipt.mock.calls[0][0];
-    expect(params.extensions.content_mode).toBeUndefined();
+    expect(params.content_mode).toBeUndefined();
   });
 
   it("resolveConfig merges contentMode", () => {
-    const api = createMockApi({ contentMode: "hash_only" });
+    const api = createMockApi({ contentMode: "hashes_only" });
     const config = resolveConfig(api);
-    expect(config.contentMode).toBe("hash_only");
+    expect(config.contentMode).toBe("hashes_only");
   });
 });
 
 // ---------------------------------------------------------------------------
-// Receipt fingerprint structure
+// Receipt structure with v1.1 fields
 // ---------------------------------------------------------------------------
 
-describe("Receipt structure", () => {
-  it("generateReceipt called with extensions containing workflow metadata", async () => {
+describe("Receipt structure with v1.1 fields", () => {
+  it("generateReceipt called with parent_receipts as top-level field", async () => {
     const api = createMockApi();
     registerHooks(api, { ...ENFORCE_CONFIG, contentMode: "redacted" }, createDeps({ workflowId: "wf-fp" }));
 
@@ -419,12 +403,10 @@ describe("Receipt structure", () => {
     await hook({ toolName: "exec", params: { command: "ls" } });
 
     const params = mockGenerateReceipt.mock.calls[0][0];
-    expect(params.extensions).toEqual({
-      workflow_id: "wf-fp",
-      parent_receipts: [],
-      content_mode: "redacted",
-      content_mode_source: "local_config",
-    });
+    expect(params.parent_receipts).toEqual([]);
+    expect(params.workflow_id).toBe("wf-fp");
+    expect(params.content_mode).toBe("redacted");
+    expect(params.content_mode_source).toBe("local_config");
   });
 
   it("receipt includes constitution_ref", async () => {
@@ -457,7 +439,28 @@ describe("Receipt structure", () => {
     });
   });
 
-  it("receipt extensions passed through to generateReceipt", async () => {
+  it("content_mode_source absent when content_mode absent", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook({ toolName: "exec", params: {} });
+
+    const params = mockGenerateReceipt.mock.calls[0][0];
+    expect(params.content_mode_source).toBeUndefined();
+  });
+
+  it("SPEC_VERSION is 1.1 in core exports", async () => {
+    const { SPEC_VERSION } = await import("@sanna-ai/core");
+    expect(SPEC_VERSION).toBe("1.1");
+  });
+
+  it("CHECKS_VERSION is 6 in core exports", async () => {
+    const { CHECKS_VERSION } = await import("@sanna-ai/core");
+    expect(CHECKS_VERSION).toBe("6");
+  });
+
+  it("parent_receipts and workflow_id are top-level ReceiptParams fields", async () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps({ workflowId: "wf-123" }));
 
@@ -465,7 +468,11 @@ describe("Receipt structure", () => {
     await hook({ toolName: "exec", params: {} });
 
     const params = mockGenerateReceipt.mock.calls[0][0];
-    expect(params).toHaveProperty("extensions");
-    expect(params.extensions.workflow_id).toBe("wf-123");
+    // These must be top-level, not nested in extensions
+    expect(params.workflow_id).toBe("wf-123");
+    expect(params.parent_receipts).toEqual([]);
+    // Verify they're not in extensions
+    expect(params.extensions?.workflow_id).toBeUndefined();
+    expect(params.extensions?.parent_receipts).toBeUndefined();
   });
 });

@@ -23,14 +23,15 @@ import {
   loadPublicKey,
   SannaSpanExporter,
   enableLlmChecks,
+  LocalSQLiteSink,
+  NullSink,
+  ReceiptStore,
 } from "@sanna-ai/core";
-import type { Constitution } from "@sanna-ai/core";
+import type { Constitution, ReceiptSink } from "@sanna-ai/core";
 import { registerHooks } from "./hooks.js";
 import type { OtelExporter } from "./hooks.js";
 import { registerGatewayMethods } from "./gateway.js";
 import { registerCli } from "./cli.js";
-import { LocalSQLiteSink, NullSink } from "./sink.js";
-import type { ReceiptSink } from "./sink.js";
 
 // import.meta.url is undefined when OpenClaw loads the plugin via jiti,
 // so fall back to __dirname (injected by CJS/jiti) or process.cwd().
@@ -136,18 +137,29 @@ export default function register(api: PluginAPI): void {
     return;
   }
 
-  // Create receipt sink
+  // Create receipt sink via @sanna-ai/core
+  const storePath =
+    config.receiptStorePath ||
+    resolve(homedir(), ".sanna", "receipts", "openclaw.db");
+
   let sink: ReceiptSink;
+  let sqliteSink: LocalSQLiteSink | null = null;
+
   if (config.sinkType === "null") {
     sink = new NullSink();
     api.logger.info("[sanna] Using NullSink (receipts discarded).");
   } else {
     // Default: local_sqlite
-    const storePath =
-      config.receiptStorePath ||
-      resolve(homedir(), ".sanna", "receipts", "openclaw.db");
-    sink = new LocalSQLiteSink(storePath);
+    sqliteSink = new LocalSQLiteSink(storePath);
+    sink = sqliteSink;
   }
+
+  // For gateway/CLI queries we need a ReceiptStore.
+  // LocalSQLiteSink exposes its inner store via getStore().
+  // If using NullSink, fall back to a fresh ReceiptStore for queries.
+  const store = sqliteSink
+    ? sqliteSink.getStore()
+    : new ReceiptStore(storePath);
 
   // Load private key (optional)
   let privateKey: KeyObject | null = null;
@@ -230,10 +242,10 @@ export default function register(api: PluginAPI): void {
   );
 
   registerHooks(api, config, { constitution, sink, privateKey, otelExporter, workflowId });
-  registerGatewayMethods(api, config, { constitution, sink });
+  registerGatewayMethods(api, config, { constitution, store });
   registerCli(api, config, {
     constitution,
-    sink,
+    store,
     constitutionPath,
     publicKey,
   });

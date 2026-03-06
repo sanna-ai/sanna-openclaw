@@ -54,7 +54,7 @@ export const DEFAULT_CONFIG: Required<SannaConfig> = {
   llmChecksModel: "",
   customEvaluatorsPath: "",
   sinkType: "local_sqlite",
-  contentMode: "full",
+  contentMode: "full" as const,
 };
 
 // ---------------------------------------------------------------------------
