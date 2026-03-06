@@ -2,16 +2,16 @@
  * Gateway RPC methods for operational visibility.
  *
  * sanna.status — current enforcement status, constitution info, receipt stats
- * sanna.audit  — recent enforcement receipts from ReceiptStore
+ * sanna.audit  — recent enforcement receipts from ReceiptSink
  */
 
 import type { SannaConfig, PluginAPI } from "./types.js";
 import type { Constitution } from "@sanna-ai/core";
-import { ReceiptStore } from "@sanna-ai/core";
+import type { ReceiptSink } from "./sink.js";
 
 export interface GatewayDeps {
   constitution: Constitution;
-  store: ReceiptStore;
+  sink: ReceiptSink;
 }
 
 /** Register sanna.status and sanna.audit Gateway RPC methods. */
@@ -20,7 +20,7 @@ export function registerGatewayMethods(
   config: SannaConfig,
   deps: GatewayDeps
 ): void {
-  const { constitution, store } = deps;
+  const { constitution, sink } = deps;
 
   // ---------------------------------------------------------------------------
   // sanna.status — enforcement status overview
@@ -29,9 +29,9 @@ export function registerGatewayMethods(
   api.registerGatewayMethod("sanna.status", ({ respond }) => {
     const stats = { total: 0, allowed: 0, denied: 0, escalated: 0 };
     try {
-      stats.total = store.count();
-      stats.allowed = store.count({ status: "PASS" });
-      stats.denied = store.count({ status: "FAIL" });
+      stats.total = sink.count();
+      stats.allowed = sink.count({ status: "PASS" });
+      stats.denied = sink.count({ status: "FAIL" });
     } catch {
       // best effort
     }
@@ -54,7 +54,7 @@ export function registerGatewayMethods(
 
   api.registerGatewayMethod("sanna.audit", ({ respond }) => {
     try {
-      const receipts = store.query({ enforcement: true, limit: 20 });
+      const receipts = sink.query({ enforcement: true, limit: 20 });
       respond(true, receipts);
     } catch {
       respond(false, { error: "Receipt query failed" });

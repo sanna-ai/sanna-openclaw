@@ -9,13 +9,14 @@ import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { SannaConfig, PluginAPI } from "./types.js";
 import type { Constitution } from "@sanna-ai/core";
-import { ReceiptStore, verifyReceipt, listEvaluators } from "@sanna-ai/core";
+import { verifyReceipt, listEvaluators } from "@sanna-ai/core";
 import { readHooksEnabled } from "./http.js";
 import type { KeyObject } from "node:crypto";
+import type { ReceiptSink } from "./sink.js";
 
 export interface CliDeps {
   constitution: Constitution;
-  store: ReceiptStore;
+  sink: ReceiptSink;
   constitutionPath: string;
   publicKey: KeyObject | null;
 }
@@ -26,7 +27,7 @@ export function registerCli(
   config: SannaConfig,
   deps: CliDeps
 ): void {
-  const { constitution, store, constitutionPath, publicKey } = deps;
+  const { constitution, sink, constitutionPath, publicKey } = deps;
 
   api.registerCli(
     ({ program }) => {
@@ -50,9 +51,9 @@ export function registerCli(
         );
 
         try {
-          const total = store.count();
-          const allowed = store.count({ status: "PASS" });
-          const denied = store.count({ status: "FAIL" });
+          const total = sink.count();
+          const allowed = sink.count({ status: "PASS" });
+          const denied = sink.count({ status: "FAIL" });
           console.log(
             `Stats: total=${total} allowed=${allowed} denied=${denied}`
           );
@@ -73,7 +74,7 @@ export function registerCli(
         async (opts: Record<string, string>) => {
           try {
             const limit = parseInt(opts.limit ?? "20", 10);
-            const receipts = store.query({ limit });
+            const receipts = sink.query({ limit });
             if (receipts.length === 0) {
               console.log("No enforcement decisions recorded.");
               return;
@@ -104,7 +105,7 @@ export function registerCli(
         },
         async (receiptId: string, opts: Record<string, string>) => {
           try {
-            const results = store.query({ limit: 1000 });
+            const results = sink.query({ limit: 1000 });
 
             // Support prefix matching for short IDs (e.g. from audit table)
             let match: unknown | undefined;
@@ -303,7 +304,7 @@ export function registerCli(
 
         // 3. receipt store writable
         try {
-          store.count();
+          sink.count();
           console.log("PASS  receipt store writable");
         } catch {
           console.log("WARN  receipt store not writable");

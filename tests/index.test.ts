@@ -27,6 +27,12 @@ vi.mock("@sanna-ai/core", () => ({
   ReceiptStore: vi.fn(() => mockReceiptStoreInstance),
 }));
 
+const mockSinkInstance = { save: vi.fn(() => ({ success: true })), count: vi.fn(() => 0), query: vi.fn(() => []), close: vi.fn() };
+vi.mock("../src/sink.js", () => ({
+  LocalSQLiteSink: vi.fn(() => mockSinkInstance),
+  NullSink: vi.fn(() => mockSinkInstance),
+}));
+
 vi.mock("../src/hooks.js", () => ({ registerHooks: vi.fn() }));
 vi.mock("../src/gateway.js", () => ({ registerGatewayMethods: vi.fn() }));
 vi.mock("../src/cli.js", () => ({ registerCli: vi.fn() }));

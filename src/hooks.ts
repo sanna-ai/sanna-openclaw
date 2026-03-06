@@ -9,6 +9,7 @@
  * tool_result_persist — stamps receipt metadata onto results for transcript.
  */
 
+import { randomUUID } from "node:crypto";
 import type { SannaConfig, PluginAPI } from "./types.js";
 import type {
   Constitution,
@@ -19,11 +20,11 @@ import {
   evaluateAuthority,
   generateReceipt,
   signReceipt,
-  ReceiptStore,
   loadInvariantChecks,
   runAllInvariantChecks,
 } from "@sanna-ai/core";
 import type { KeyObject } from "node:crypto";
+import type { ReceiptSink } from "./sink.js";
 
 export interface OtelExporter {
   exportReceipt(receipt: Record<string, unknown>): void;
@@ -31,9 +32,10 @@ export interface OtelExporter {
 
 export interface HookDeps {
   constitution: Constitution;
-  store: ReceiptStore;
+  sink: ReceiptSink;
   privateKey: KeyObject | null;
   otelExporter?: OtelExporter | null;
+  workflowId?: string;
 }
 
 export function registerHooks(
@@ -41,12 +43,15 @@ export function registerHooks(
   config: SannaConfig,
   deps: HookDeps
 ): void {
-  const { constitution, store, privateKey } = deps;
+  const { constitution, sink, privateKey } = deps;
   const isEnforceMode = config.enforcementMode === "enforce";
+  const workflowId = deps.workflowId ?? randomUUID();
 
   // Track last receipt per tool call for after_tool_call observability
+  // and receipt chaining (parent_receipts)
   let lastReceipt: {
     receiptId: string;
+    fingerprint: string;
     tool: string;
     verdict: string;
   } | null = null;
@@ -249,6 +254,21 @@ export function registerHooks(
         coverage_pct: checks.length > 0 ? 100 : 0,
       };
 
+      // Build receipt chaining: parent_receipts from prior receipt
+      const parentReceipts = lastReceipt?.fingerprint
+        ? [lastReceipt.fingerprint]
+        : [];
+
+      // Build extensions with v1.0 metadata
+      const extensions: Record<string, unknown> = {
+        workflow_id: workflowId,
+        parent_receipts: parentReceipts,
+      };
+      if (config.contentMode && config.contentMode !== "full") {
+        extensions.content_mode = config.contentMode;
+        extensions.content_mode_source = "local_config";
+      }
+
       // Generate receipt for EVERY decision
       const correlationId = `${toolName}-${Date.now()}`;
       let receipt: Record<string, unknown>;
@@ -279,6 +299,7 @@ export function registerHooks(
             timestamp: new Date().toISOString(),
           },
           evaluation_coverage,
+          extensions,
         }) as unknown as Record<string, unknown>;
 
         if (privateKey) {
@@ -286,7 +307,10 @@ export function registerHooks(
         }
 
         // Write-ahead: persist BEFORE returning verdict
-        store.save(receipt);
+        const sinkResult = sink.save(receipt);
+        if (!sinkResult.success) {
+          throw new Error(sinkResult.error ?? "Sink save failed");
+        }
 
         // Fire-and-forget OTel export after successful persistence
         if (deps.otelExporter) {
@@ -312,12 +336,14 @@ export function registerHooks(
       }
 
       const receiptId = (receipt.receipt_id as string) ?? "";
+      const fingerprint = (receipt.receipt_fingerprint as string) ?? "";
       const agentId = (ctx?.agentId as string) ?? "";
       const sessionId = (ctx?.sessionKey as string) ?? "";
 
-      // Store for after_tool_call observability
+      // Store for after_tool_call observability and receipt chaining
       lastReceipt = {
         receiptId,
+        fingerprint,
         tool: toolName,
         verdict: decision.decision,
       };

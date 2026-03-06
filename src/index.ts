@@ -12,6 +12,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
 import type { KeyObject } from "node:crypto";
 import type { PluginAPI } from "./types.js";
 import { resolveConfig } from "./config.js";
@@ -20,7 +21,6 @@ import {
   loadConstitution,
   loadPrivateKey,
   loadPublicKey,
-  ReceiptStore,
   SannaSpanExporter,
   enableLlmChecks,
 } from "@sanna-ai/core";
@@ -29,6 +29,8 @@ import { registerHooks } from "./hooks.js";
 import type { OtelExporter } from "./hooks.js";
 import { registerGatewayMethods } from "./gateway.js";
 import { registerCli } from "./cli.js";
+import { LocalSQLiteSink, NullSink } from "./sink.js";
+import type { ReceiptSink } from "./sink.js";
 
 // import.meta.url is undefined when OpenClaw loads the plugin via jiti,
 // so fall back to __dirname (injected by CJS/jiti) or process.cwd().
@@ -134,11 +136,18 @@ export default function register(api: PluginAPI): void {
     return;
   }
 
-  // Open receipt store
-  const storePath =
-    config.receiptStorePath ||
-    resolve(homedir(), ".sanna", "receipts", "openclaw.db");
-  const store = new ReceiptStore(storePath);
+  // Create receipt sink
+  let sink: ReceiptSink;
+  if (config.sinkType === "null") {
+    sink = new NullSink();
+    api.logger.info("[sanna] Using NullSink (receipts discarded).");
+  } else {
+    // Default: local_sqlite
+    const storePath =
+      config.receiptStorePath ||
+      resolve(homedir(), ".sanna", "receipts", "openclaw.db");
+    sink = new LocalSQLiteSink(storePath);
+  }
 
   // Load private key (optional)
   let privateKey: KeyObject | null = null;
@@ -213,15 +222,18 @@ export default function register(api: PluginAPI): void {
     }
   }
 
+  // Generate a workflow ID for this plugin session
+  const workflowId = randomUUID();
+
   api.logger.info(
     `[sanna] Governance plugin loaded. Mode: ${config.enforcementMode}`
   );
 
-  registerHooks(api, config, { constitution, store, privateKey, otelExporter });
-  registerGatewayMethods(api, config, { constitution, store });
+  registerHooks(api, config, { constitution, sink, privateKey, otelExporter, workflowId });
+  registerGatewayMethods(api, config, { constitution, sink });
   registerCli(api, config, {
     constitution,
-    store,
+    sink,
     constitutionPath,
     publicKey,
   });

@@ -18,6 +18,8 @@ export interface SannaConfig {
   llmChecks?: boolean;
   llmChecksModel?: string;
   customEvaluatorsPath?: string;
+  sinkType?: "local_sqlite" | "null" | "composite";
+  contentMode?: "full" | "redacted" | "hash_only";
 }
 
 // ---------------------------------------------------------------------------

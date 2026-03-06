@@ -53,6 +53,8 @@ export const DEFAULT_CONFIG: Required<SannaConfig> = {
   llmChecks: false,
   llmChecksModel: "",
   customEvaluatorsPath: "",
+  sinkType: "local_sqlite",
+  contentMode: "full",
 };
 
 // ---------------------------------------------------------------------------
@@ -82,5 +84,7 @@ export function resolveConfig(api: PluginAPI): SannaConfig {
     llmChecksModel: raw.llmChecksModel ?? DEFAULT_CONFIG.llmChecksModel,
     customEvaluatorsPath:
       raw.customEvaluatorsPath ?? DEFAULT_CONFIG.customEvaluatorsPath,
+    sinkType: raw.sinkType ?? DEFAULT_CONFIG.sinkType,
+    contentMode: raw.contentMode ?? DEFAULT_CONFIG.contentMode,
   };
 }

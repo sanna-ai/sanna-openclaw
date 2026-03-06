@@ -84,7 +84,7 @@ function mockConstitution() {
 function createDeps(overrides?: Partial<HookDeps>): HookDeps {
   return {
     constitution: mockConstitution() as HookDeps["constitution"],
-    store: { save: mockStoreSave } as unknown as HookDeps["store"],
+    sink: { save: mockStoreSave, query: vi.fn(() => []), count: vi.fn(() => 0), close: vi.fn() } as unknown as HookDeps["sink"],
     privateKey: null,
     ...overrides,
   };
@@ -95,6 +95,8 @@ beforeEach(() => {
   // Default: generate receipt returns an object with receipt_id
   mockGenerateReceipt.mockReturnValue({ receipt_id: "r-mock-123" });
   mockSignReceipt.mockImplementation((r: unknown) => r);
+  // Default: sink save succeeds
+  mockStoreSave.mockReturnValue({ success: true });
   // Default: no invariant checks defined
   mockLoadInvariantChecks.mockReturnValue([]);
   mockRunAllInvariantChecks.mockReturnValue([]);
@@ -1707,13 +1709,11 @@ describe("otelExporter", () => {
 
   it("otelExporter not called when receipt save fails", async () => {
     const mockExportReceipt = vi.fn();
-    const failingSave = vi.fn(() => {
-      throw new Error("DB write failed");
-    });
+    const failingSave = vi.fn(() => ({ success: false, error: "DB write failed" }));
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, {
       constitution: mockConstitution() as HookDeps["constitution"],
-      store: { save: failingSave } as unknown as HookDeps["store"],
+      sink: { save: failingSave, query: vi.fn(() => []), count: vi.fn(() => 0), close: vi.fn() } as unknown as HookDeps["sink"],
       privateKey: null,
       otelExporter: { exportReceipt: mockExportReceipt },
     });

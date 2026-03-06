@@ -73,12 +73,12 @@ function createDeps(overrides?: Partial<CliDeps>): CliDeps {
       },
       policy_hash: "test-hash",
     } as CliDeps["constitution"],
-    store: {
+    sink: {
       count: mockStoreCount,
       query: mockStoreQuery,
       save: vi.fn(),
       close: vi.fn(),
-    } as unknown as CliDeps["store"],
+    } as unknown as CliDeps["sink"],
     constitutionPath: "/path/to/constitution.yaml",
     publicKey: null,
     ...overrides,
