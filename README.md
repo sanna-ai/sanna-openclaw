@@ -31,7 +31,7 @@ Sanna is a governance layer for AI agents. It has two pillars:
 
 **Constitution enforcement.** YAML constitutions define three tiers of authority: tools the agent can execute freely, actions that require human approval, and operations that are permanently blocked. But tier matching alone isn't enough — invariants inspect the full parameter context of every tool call, catching dangerous patterns regardless of which tool executes them.
 
-**Cryptographic receipts.** Every governance decision — allow, escalate, or halt — produces an Ed25519-signed receipt persisted to a local SQLite store *before* the response returns to the agent. Receipts are tamper-evident and independently verifiable. If it happened, there's a receipt.
+**Cryptographic receipts.** Every governance decision — allow, escalate, or halt — produces an Ed25519-signed receipt persisted via a `ReceiptSink` *before* the response returns to the agent. Receipts use the Sanna v1.1 protocol with 14-field fingerprints, receipt chaining (`parent_receipts`), and per-session `workflow_id` tracking. Receipts are tamper-evident and independently verifiable. If it happened, there's a receipt.
 
 The system is fail-closed. If evaluation throws or receipt persistence fails, the action is blocked in enforce mode.
 
@@ -46,7 +46,7 @@ The system is fail-closed. If evaluation throws or receipt persistence fails, th
  │           │              │     via @sanna-ai/core (in-process)  │
  │           │              │  2. Run invariant checks             │
  │           │              │  3. generateReceipt() + signReceipt()│
- │           │              │  4. ReceiptStore.save() (write-ahead)│
+ │           │              │  4. ReceiptSink.store() (write-ahead)│
  │           │              │  5. OTel span export (optional)      │
  │           │              │  6. Return allow / block to Gateway  │
  │           │<─ result ────│                                     │
@@ -64,7 +64,7 @@ npm run build
 
 # Pack and install
 npm pack
-openclaw plugins install sanna-0.2.0.tgz
+openclaw plugins install sanna-1.0.0.tgz
 
 # Enable hooks in ~/.openclaw/openclaw.json
 # hooks.internal.enabled must be true for governance to fire
@@ -182,6 +182,8 @@ In `openclaw.json`, the plugin reads its config from the plugin block:
 | `receiptStorePath` | string | `~/.sanna/receipts/openclaw.db` | SQLite receipt store path |
 | `governedTools` | string[] | All tier 1+2+3 | Tool names to govern |
 | `enforcementMode` | string | `"enforce"` | `enforce`, `audit`, or `passthrough` |
+| `sinkType` | string | `"local_sqlite"` | Receipt sink: `local_sqlite`, `null`, or `composite` |
+| `contentMode` | string | `"full"` | Receipt content mode: `full`, `redacted`, or `hashes_only` |
 | `otelExport` | boolean | `false` | Enable OpenTelemetry span export for receipts |
 | `otelServiceName` | string | `"sanna-openclaw"` | OTel service name for exported spans |
 | `llmChecks` | boolean | `false` | Enable LLM semantic checks for invariant evaluation |
@@ -208,7 +210,7 @@ Set `customEvaluatorsPath` to a JS module that registers custom invariant evalua
 ## Development
 
 ```bash
-# TypeScript tests (147 tests)
+# TypeScript tests (178 tests)
 npm test
 
 # Type check
