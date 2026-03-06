@@ -109,7 +109,7 @@ export function registerHooks(
         name: "Authority Boundary Evaluation",
         passed: decision.decision === "allow",
         severity: decision.decision === "allow" ? "info" : "critical",
-        status: decision.decision === "allow" ? "PASS" : "FAIL",
+        status: decision.decision === "allow" ? null : "FAILED",
         evidence: `${decision.boundary_type}: ${decision.reason}`,
       };
 
@@ -174,11 +174,11 @@ export function registerHooks(
                 const hit = regex.exec(testStr);
                 if (hit) {
                   check.passed = false;
-                  check.status = "FAIL";
+                  check.status = "FAILED";
                   check.evidence = `Parameter matched denied pattern: ${hit[0]}`;
                 } else {
                   check.passed = true;
-                  check.status = "PASS";
+                  check.status = null;
                   check.evidence =
                     "Parameter did not match denied pattern";
                 }
@@ -246,18 +246,19 @@ export function registerHooks(
         )
         .map((c) => c.check_id);
 
-      // Compute evaluation coverage
+      // Compute evaluation coverage (schema: total_invariants, evaluated, not_checked, coverage_basis_points)
       const evaluation_coverage = {
-        checks_run: checks.length,
-        checks_passed: checks.filter((c) => c.passed).length,
-        checks_failed: checks.filter((c) => !c.passed).length,
-        coverage_pct: checks.length > 0 ? 100 : 0,
+        total_invariants: checks.length,
+        evaluated: checks.length,
+        not_checked: 0,
+        coverage_basis_points: checks.length > 0 ? 10000 : 0,
       };
 
       // Receipt chaining: parent_receipts from prior receipt fingerprint
+      // Must be null (not []) when no parent — they produce different fingerprints
       const parentReceipts = lastReceipt?.fingerprint
         ? [lastReceipt.fingerprint]
-        : [];
+        : null;
 
       // Generate receipt for EVERY decision
       const correlationId = `${toolName}-${Date.now()}`;
@@ -277,7 +278,10 @@ export function registerHooks(
             policy_hash: constitution.policy_hash ?? "",
           },
           enforcement: {
-            action: toolName,
+            action: decision.decision === "allow" ? "allowed"
+              : decision.decision === "escalate" ? "escalated"
+              : decision.decision === "halt" ? "halted"
+              : "warned",
             reason: decision.reason,
             failed_checks: [
               ...(decision.decision !== "allow"
@@ -285,7 +289,9 @@ export function registerHooks(
                 : []),
               ...failedInvariantIds,
             ],
-            enforcement_mode: config.enforcementMode ?? "enforce",
+            enforcement_mode: config.enforcementMode === "enforce" ? "halt"
+              : config.enforcementMode === "audit" ? "warn"
+              : "log",
             timestamp: new Date().toISOString(),
           },
           evaluation_coverage,

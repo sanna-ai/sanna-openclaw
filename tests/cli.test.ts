@@ -257,7 +257,7 @@ describe("verify command", () => {
     inputs: { tool: "exec", params: { command: "ls" } },
     outputs: { verdict: "allow", reason: "Permitted" },
     checks: [
-      { check_id: "AUTHORITY", passed: true, severity: "info", status: "PASS", evidence: "ok" },
+      { check_id: "AUTHORITY", passed: true, severity: "info", status: null, evidence: "ok" },
     ],
   };
 

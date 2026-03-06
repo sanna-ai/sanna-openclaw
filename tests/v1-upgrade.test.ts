@@ -270,7 +270,7 @@ describe("OC4: Receipt chaining", () => {
 
     expect(mockGenerateReceipt).toHaveBeenCalledOnce();
     const params = mockGenerateReceipt.mock.calls[0][0];
-    expect(params.parent_receipts).toEqual([]);
+    expect(params.parent_receipts).toEqual(null);
   });
 
   it("second receipt chains to first via parent_receipts", async () => {
@@ -403,7 +403,7 @@ describe("Receipt structure with v1.1 fields", () => {
     await hook({ toolName: "exec", params: { command: "ls" } });
 
     const params = mockGenerateReceipt.mock.calls[0][0];
-    expect(params.parent_receipts).toEqual([]);
+    expect(params.parent_receipts).toEqual(null);
     expect(params.workflow_id).toBe("wf-fp");
     expect(params.content_mode).toBe("redacted");
     expect(params.content_mode_source).toBe("local_config");
@@ -432,10 +432,10 @@ describe("Receipt structure with v1.1 fields", () => {
 
     const params = mockGenerateReceipt.mock.calls[0][0];
     expect(params.evaluation_coverage).toEqual({
-      checks_run: 1,
-      checks_passed: 1,
-      checks_failed: 0,
-      coverage_pct: 100,
+      total_invariants: 1,
+      evaluated: 1,
+      not_checked: 0,
+      coverage_basis_points: 10000,
     });
   });
 
@@ -470,7 +470,7 @@ describe("Receipt structure with v1.1 fields", () => {
     const params = mockGenerateReceipt.mock.calls[0][0];
     // These must be top-level, not nested in extensions
     expect(params.workflow_id).toBe("wf-123");
-    expect(params.parent_receipts).toEqual([]);
+    expect(params.parent_receipts).toEqual(null);
     // Verify they're not in extensions
     expect(params.extensions?.workflow_id).toBeUndefined();
     expect(params.extensions?.parent_receipts).toBeUndefined();
