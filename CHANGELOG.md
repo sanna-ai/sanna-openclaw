@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.0.1
+
+### Fixed
+
+- `evaluation_coverage` uses schema-valid keys: `total_invariants`, `evaluated`, `not_checked`, `coverage_basis_points` (was `checks_run`, `checks_passed`, `checks_failed`, `coverage_pct`)
+- `enforcement.action` uses schema-valid values: `allowed`, `halted`, `escalated`, `warned` (was raw decision strings)
+- `enforcement.enforcement_mode` uses schema-valid values: `halt`, `warn`, `log` (was `enforce`, `audit`, `passthrough`)
+- `CheckResult.status` uses schema-valid values: `null` for passing, `"FAILED"` for failing (was `"PASS"`, `"FAIL"`)
+- `parent_receipts` defaults to `null` when no parent receipt exists (was `[]`) — different fingerprints
+- 13 new schema compliance tests (191 total)
+
 ## v1.0.0
 
 ### Breaking Changes
