@@ -1,7 +1,7 @@
 {
   "id": "sanna",
   "name": "Sanna Governance",
-  "version": "0.2.0",
+  "version": "1.0.1",
   "description": "Constitution enforcement and cryptographic receipts for OpenClaw agent tool execution",
   "configSchema": {
     "type": "object",
@@ -55,6 +55,18 @@
       "customEvaluatorsPath": {
         "type": "string",
         "description": "Path to JS module that registers custom invariant evaluators"
+      },
+      "sinkType": {
+        "type": "string",
+        "enum": ["local_sqlite", "null", "composite"],
+        "default": "local_sqlite",
+        "description": "Receipt persistence sink type"
+      },
+      "contentMode": {
+        "type": "string",
+        "enum": ["full", "redacted", "hashes_only"],
+        "default": "full",
+        "description": "Content mode for receipt data: full content, redacted, or hash-only"
       }
     }
   },
