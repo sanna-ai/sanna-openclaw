@@ -18,20 +18,27 @@ const mockSignReceipt = vi.fn();
 const mockLoadInvariantChecks = vi.fn();
 const mockRunAllInvariantChecks = vi.fn();
 
-vi.mock("@sanna-ai/core", () => ({
-  evaluateAuthority: (...args: unknown[]) => mockEvaluateAuthority(...args),
-  generateReceipt: (...args: unknown[]) => mockGenerateReceipt(...args),
-  signReceipt: (...args: unknown[]) => mockSignReceipt(...args),
-  loadInvariantChecks: (...args: unknown[]) => mockLoadInvariantChecks(...args),
-  runAllInvariantChecks: (...args: unknown[]) =>
-    mockRunAllInvariantChecks(...args),
-  ReceiptStore: vi.fn(),
-  LocalSQLiteSink: vi.fn(),
-  NullSink: vi.fn(),
-  CompositeSink: vi.fn(),
-  SPEC_VERSION: "1.1",
-  CHECKS_VERSION: "6",
-}));
+vi.mock("@sanna-ai/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@sanna-ai/core")>();
+  return {
+    evaluateAuthority: (...args: unknown[]) => mockEvaluateAuthority(...args),
+    generateReceipt: (...args: unknown[]) => mockGenerateReceipt(...args),
+    signReceipt: (...args: unknown[]) => mockSignReceipt(...args),
+    loadInvariantChecks: (...args: unknown[]) => mockLoadInvariantChecks(...args),
+    runAllInvariantChecks: (...args: unknown[]) =>
+      mockRunAllInvariantChecks(...args),
+    ReceiptStore: vi.fn(),
+    LocalSQLiteSink: vi.fn(),
+    NullSink: vi.fn(),
+    CompositeSink: vi.fn(),
+    SPEC_VERSION: "1.1",
+    CHECKS_VERSION: "6",
+    // Real implementations for hash utilities used by hooks.ts
+    hashObj: actual.hashObj,
+    hashContent: actual.hashContent,
+    EMPTY_HASH: actual.EMPTY_HASH,
+  };
+});
 
 import { registerHooks } from "../src/hooks.js";
 import { resolveConfig, DEFAULT_CONFIG } from "../src/config.js";
@@ -105,6 +112,23 @@ const ENFORCE_CONFIG: SannaConfig = {
   governedTools: ["exec", "write"],
 };
 
+/** Call before_tool_call + after_tool_call for an allowed action (completes receipt). */
+async function callAllowedAction(
+  api: MockAPI,
+  toolName: string,
+  params: Record<string, unknown> = {},
+  result: unknown = { content: [{ type: "text", text: "ok" }] }
+) {
+  const beforeHook = api._hooks.get("before_tool_call")!;
+  const beforeResult = await beforeHook(
+    { toolName, params },
+    { toolName, agentId: "agent-1", sessionKey: "sess-1" }
+  );
+  const afterHook = api._hooks.get("after_tool_call")!;
+  await afterHook({ toolName, result });
+  return beforeResult;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockGenerateReceipt.mockReturnValue({
@@ -157,13 +181,12 @@ describe("OC2: ReceiptSink from @sanna-ai/core", () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps({ sink }));
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     expect(sink.store).toHaveBeenCalledOnce();
   });
 
-  it("sink store returning failure blocks in enforce mode", async () => {
+  it("sink store returning failure blocks in enforce mode for halt", async () => {
     const sink = createMockSink();
     (sink.store as ReturnType<typeof vi.fn>).mockResolvedValue({
       success: false,
@@ -171,6 +194,12 @@ describe("OC2: ReceiptSink from @sanna-ai/core", () => {
     });
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps({ sink }));
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "halt",
+      reason: "Blocked",
+      boundary_type: "cannot_execute",
+    });
 
     const hook = api._hooks.get("before_tool_call")!;
     const result = await hook({ toolName: "exec", params: {} });
@@ -185,8 +214,7 @@ describe("OC2: ReceiptSink from @sanna-ai/core", () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps({ sink }));
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     const storedReceipt = (sink.store as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(storedReceipt).toHaveProperty("receipt_id", "r-v1-test");
@@ -203,17 +231,22 @@ describe("OC2: ReceiptSink from @sanna-ai/core", () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps({ sink }));
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     expect(resolved).toBe(true);
   });
 
-  it("sink.store() rejection blocks in enforce mode", async () => {
+  it("sink.store() rejection blocks in enforce mode for halt", async () => {
     const sink = createMockSink();
     (sink.store as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Connection refused"));
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps({ sink }));
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "halt",
+      reason: "Blocked",
+      boundary_type: "cannot_execute",
+    });
 
     const hook = api._hooks.get("before_tool_call")!;
     const result = await hook({ toolName: "exec", params: {} });
@@ -223,11 +256,17 @@ describe("OC2: ReceiptSink from @sanna-ai/core", () => {
     );
   });
 
-  it("sink.store() rejection in audit mode does not block", async () => {
+  it("sink.store() rejection in audit mode does not block for halt", async () => {
     const sink = createMockSink();
     (sink.store as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Connection refused"));
     const api = createMockApi();
     registerHooks(api, { ...ENFORCE_CONFIG, enforcementMode: "audit" }, createDeps({ sink }));
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "halt",
+      reason: "Blocked",
+      boundary_type: "cannot_execute",
+    });
 
     const hook = api._hooks.get("before_tool_call")!;
     const result = await hook({ toolName: "exec", params: {} });
@@ -265,8 +304,7 @@ describe("OC4: Receipt chaining", () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps());
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     expect(mockGenerateReceipt).toHaveBeenCalledOnce();
     const params = mockGenerateReceipt.mock.calls[0][0];
@@ -281,9 +319,8 @@ describe("OC4: Receipt chaining", () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps());
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
-    await hook({ toolName: "write", params: {} });
+    await callAllowedAction(api, "exec");
+    await callAllowedAction(api, "write");
 
     const secondCall = mockGenerateReceipt.mock.calls[1][0];
     expect(secondCall.parent_receipts).toEqual(["fp-1"]);
@@ -293,8 +330,7 @@ describe("OC4: Receipt chaining", () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps({ workflowId: "wf-test-123" }));
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     const params = mockGenerateReceipt.mock.calls[0][0];
     expect(params.workflow_id).toBe("wf-test-123");
@@ -304,8 +340,7 @@ describe("OC4: Receipt chaining", () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps());
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     const params = mockGenerateReceipt.mock.calls[0][0];
     expect(params.workflow_id).toBeDefined();
@@ -321,9 +356,8 @@ describe("OC4: Receipt chaining", () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps());
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
-    await hook({ toolName: "write", params: {} });
+    await callAllowedAction(api, "exec");
+    await callAllowedAction(api, "write");
 
     const wf1 = mockGenerateReceipt.mock.calls[0][0].workflow_id;
     const wf2 = mockGenerateReceipt.mock.calls[1][0].workflow_id;
@@ -340,8 +374,7 @@ describe("OC5: Content mode", () => {
     const api = createMockApi();
     registerHooks(api, { ...ENFORCE_CONFIG, contentMode: "full" }, createDeps());
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     const params = mockGenerateReceipt.mock.calls[0][0];
     expect(params.content_mode).toBeUndefined();
@@ -352,8 +385,7 @@ describe("OC5: Content mode", () => {
     const api = createMockApi();
     registerHooks(api, { ...ENFORCE_CONFIG, contentMode: "redacted" }, createDeps());
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     const params = mockGenerateReceipt.mock.calls[0][0];
     expect(params.content_mode).toBe("redacted");
@@ -364,8 +396,7 @@ describe("OC5: Content mode", () => {
     const api = createMockApi();
     registerHooks(api, { ...ENFORCE_CONFIG, contentMode: "hashes_only" }, createDeps());
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     const params = mockGenerateReceipt.mock.calls[0][0];
     expect(params.content_mode).toBe("hashes_only");
@@ -376,8 +407,7 @@ describe("OC5: Content mode", () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps());
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     const params = mockGenerateReceipt.mock.calls[0][0];
     expect(params.content_mode).toBeUndefined();
@@ -399,8 +429,7 @@ describe("Receipt structure with v1.1 fields", () => {
     const api = createMockApi();
     registerHooks(api, { ...ENFORCE_CONFIG, contentMode: "redacted" }, createDeps({ workflowId: "wf-fp" }));
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: { command: "ls" } });
+    await callAllowedAction(api, "exec", { command: "ls" });
 
     const params = mockGenerateReceipt.mock.calls[0][0];
     expect(params.parent_receipts).toEqual(null);
@@ -413,8 +442,7 @@ describe("Receipt structure with v1.1 fields", () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps());
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     const params = mockGenerateReceipt.mock.calls[0][0];
     expect(params.constitution_ref).toEqual({
@@ -427,8 +455,7 @@ describe("Receipt structure with v1.1 fields", () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps());
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     const params = mockGenerateReceipt.mock.calls[0][0];
     expect(params.evaluation_coverage).toEqual({
@@ -443,8 +470,7 @@ describe("Receipt structure with v1.1 fields", () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps());
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     const params = mockGenerateReceipt.mock.calls[0][0];
     expect(params.content_mode_source).toBeUndefined();
@@ -464,8 +490,7 @@ describe("Receipt structure with v1.1 fields", () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps({ workflowId: "wf-123" }));
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     const params = mockGenerateReceipt.mock.calls[0][0];
     // These must be top-level, not nested in extensions

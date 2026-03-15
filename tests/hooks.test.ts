@@ -13,15 +13,26 @@ const mockStoreSave = vi.fn();
 const mockLoadInvariantChecks = vi.fn();
 const mockRunAllInvariantChecks = vi.fn();
 
-vi.mock("@sanna-ai/core", () => ({
-  evaluateAuthority: (...args: unknown[]) => mockEvaluateAuthority(...args),
-  generateReceipt: (...args: unknown[]) => mockGenerateReceipt(...args),
-  signReceipt: (...args: unknown[]) => mockSignReceipt(...args),
-  loadInvariantChecks: (...args: unknown[]) => mockLoadInvariantChecks(...args),
-  runAllInvariantChecks: (...args: unknown[]) =>
-    mockRunAllInvariantChecks(...args),
-  ReceiptStore: vi.fn(),
-}));
+// Use the real hash functions — they are pure and deterministic
+const { hashObj: realHashObj, hashContent: realHashContent, EMPTY_HASH: realEmptyHash } =
+  await vi.importActual<typeof import("@sanna-ai/core")>("@sanna-ai/core");
+
+vi.mock("@sanna-ai/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@sanna-ai/core")>();
+  return {
+    evaluateAuthority: (...args: unknown[]) => mockEvaluateAuthority(...args),
+    generateReceipt: (...args: unknown[]) => mockGenerateReceipt(...args),
+    signReceipt: (...args: unknown[]) => mockSignReceipt(...args),
+    loadInvariantChecks: (...args: unknown[]) => mockLoadInvariantChecks(...args),
+    runAllInvariantChecks: (...args: unknown[]) =>
+      mockRunAllInvariantChecks(...args),
+    ReceiptStore: vi.fn(),
+    // Real implementations for hash utilities used by hooks.ts
+    hashObj: actual.hashObj,
+    hashContent: actual.hashContent,
+    EMPTY_HASH: actual.EMPTY_HASH,
+  };
+});
 
 import { registerHooks } from "../src/hooks.js";
 
@@ -88,6 +99,23 @@ function createDeps(overrides?: Partial<HookDeps>): HookDeps {
     privateKey: null,
     ...overrides,
   };
+}
+
+/** Call before_tool_call + after_tool_call for an allowed action (completes receipt). */
+async function callAllowedAction(
+  api: MockAPI,
+  toolName: string,
+  params: Record<string, unknown> = {},
+  result: unknown = { content: [{ type: "text", text: "ok" }] }
+) {
+  const beforeHook = api._hooks.get("before_tool_call")!;
+  const beforeResult = await beforeHook(
+    { toolName, params },
+    { toolName, agentId: "agent-1", sessionKey: "sess-1" }
+  );
+  const afterHook = api._hooks.get("after_tool_call")!;
+  await afterHook({ toolName, result });
+  return beforeResult;
 }
 
 beforeEach(() => {
@@ -216,8 +244,7 @@ describe("before_tool_call", () => {
       boundary_type: "can_execute",
     });
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} }, { toolName: "exec" });
+    await callAllowedAction(api, "exec");
 
     expect(mockGenerateReceipt).toHaveBeenCalledOnce();
     expect(mockStoreSave).toHaveBeenCalledOnce();
@@ -258,14 +285,14 @@ describe("before_tool_call", () => {
     expect(result.blockReason).toContain("evaluation failed");
   });
 
-  it("blocks when receipt persistence fails (enforce mode)", async () => {
+  it("blocks when receipt persistence fails for halt (enforce mode)", async () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps());
 
     mockEvaluateAuthority.mockReturnValue({
-      decision: "allow",
-      reason: "Permitted",
-      boundary_type: "can_execute",
+      decision: "halt",
+      reason: "Blocked",
+      boundary_type: "cannot_execute",
     });
     mockGenerateReceipt.mockImplementation(() => {
       throw new Error("DB write failed");
@@ -367,7 +394,7 @@ describe("before_tool_call", () => {
     expect(result.blockReason).toContain("receipt-abc-123");
   });
 
-  it("logs ALLOW with receipt ID prefix", async () => {
+  it("logs ALLOW with pending receipt info", async () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps());
 
@@ -375,9 +402,6 @@ describe("before_tool_call", () => {
       decision: "allow",
       reason: "Permitted",
       boundary_type: "can_execute",
-    });
-    mockGenerateReceipt.mockReturnValue({
-      receipt_id: "abcdef12-3456-7890",
     });
 
     const hook = api._hooks.get("before_tool_call")!;
@@ -387,7 +411,7 @@ describe("before_tool_call", () => {
       expect.stringContaining("ALLOW ls")
     );
     expect(api.logger.info).toHaveBeenCalledWith(
-      expect.stringContaining("abcdef12")
+      expect.stringContaining("pending receipt")
     );
   });
 
@@ -402,8 +426,7 @@ describe("before_tool_call", () => {
       boundary_type: "can_execute",
     });
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} }, { toolName: "exec" });
+    await callAllowedAction(api, "exec");
 
     expect(mockSignReceipt).toHaveBeenCalledOnce();
     expect(mockSignReceipt).toHaveBeenCalledWith(
@@ -429,8 +452,7 @@ describe("checks and evaluation_coverage", () => {
       boundary_type: "can_execute",
     });
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} }, { toolName: "exec" });
+    await callAllowedAction(api, "exec");
 
     const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
       string,
@@ -494,11 +516,7 @@ describe("checks and evaluation_coverage", () => {
       },
     ]);
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook(
-      { toolName: "exec", params: { command: "ls" } },
-      { toolName: "exec" }
-    );
+    await callAllowedAction(api, "exec", { command: "ls" });
 
     expect(mockRunAllInvariantChecks).toHaveBeenCalledOnce();
 
@@ -532,8 +550,13 @@ describe("checks and evaluation_coverage", () => {
       { toolName: "exec" }
     );
 
-    // Should still generate receipt and allow
+    // Should still allow (receipt generated in after_tool_call)
     expect(result).toEqual({ blocked: false });
+
+    // Complete the allowed action to generate receipt
+    const afterHook = api._hooks.get("after_tool_call")!;
+    await afterHook({ toolName: "exec", result: { ok: true } });
+
     expect(mockGenerateReceipt).toHaveBeenCalledOnce();
 
     const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
@@ -567,8 +590,7 @@ describe("checks and evaluation_coverage", () => {
       },
     ]);
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} }, { toolName: "exec" });
+    await callAllowedAction(api, "exec");
 
     const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
       string,
@@ -597,8 +619,7 @@ describe("checks and evaluation_coverage", () => {
 
     mockLoadInvariantChecks.mockReturnValue([]);
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} }, { toolName: "exec" });
+    await callAllowedAction(api, "exec");
 
     expect(mockRunAllInvariantChecks).not.toHaveBeenCalled();
 
@@ -634,8 +655,7 @@ describe("checks and evaluation_coverage", () => {
       },
     ]);
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} }, { toolName: "exec" });
+    await callAllowedAction(api, "exec");
 
     const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
       string,
@@ -896,11 +916,7 @@ describe("invariant escalation bypass prevention", () => {
     mockLoadInvariantChecks.mockReturnValue(COMMS_INVARIANT_DEFS_WITH_RULES);
     mockRunAllInvariantChecks.mockReturnValue(unknownTypeResults());
 
-    const hook = api._hooks.get("before_tool_call")!;
-    const result = await hook(
-      { toolName: "exec", params: { command: "ls -la" } },
-      { toolName: "exec" }
-    );
+    const result = await callAllowedAction(api, "exec", { command: "ls -la" });
 
     expect(result).toEqual({ blocked: false });
 
@@ -1654,8 +1670,7 @@ describe("otelExporter", () => {
       boundary_type: "can_execute",
     });
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} }, { toolName: "exec" });
+    await callAllowedAction(api, "exec");
 
     expect(mockExportReceipt).toHaveBeenCalledOnce();
     expect(mockExportReceipt).toHaveBeenCalledWith({ receipt_id: "r-mock-123" });
@@ -1678,11 +1693,7 @@ describe("otelExporter", () => {
       boundary_type: "can_execute",
     });
 
-    const hook = api._hooks.get("before_tool_call")!;
-    const result = await hook(
-      { toolName: "exec", params: {} },
-      { toolName: "exec" }
-    );
+    const result = await callAllowedAction(api, "exec");
 
     expect(result).toEqual({ blocked: false });
     expect(mockExportReceipt).toHaveBeenCalledOnce();
@@ -1707,13 +1718,12 @@ describe("otelExporter", () => {
     expect(result).toEqual({ blocked: false });
   });
 
-  it("otelExporter not called when receipt save fails", async () => {
+  it("otelExporter not called when receipt save fails in after_tool_call", async () => {
     const mockExportReceipt = vi.fn();
-    const failingStore = vi.fn(async () => ({ success: false, error: "DB write failed" }));
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, {
       constitution: mockConstitution() as HookDeps["constitution"],
-      sink: { store: failingStore } as unknown as HookDeps["sink"],
+      sink: { store: vi.fn(async () => ({ success: true })) } as unknown as HookDeps["sink"],
       privateKey: null,
       otelExporter: { exportReceipt: mockExportReceipt },
     });
@@ -1724,19 +1734,27 @@ describe("otelExporter", () => {
       boundary_type: "can_execute",
     });
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} }, { toolName: "exec" });
+    // Make generateReceipt throw in after_tool_call
+    mockGenerateReceipt.mockImplementation(() => {
+      throw new Error("receipt generation failed");
+    });
+
+    const beforeHook = api._hooks.get("before_tool_call")!;
+    await beforeHook({ toolName: "exec", params: {} }, { toolName: "exec" });
+
+    const afterHook = api._hooks.get("after_tool_call")!;
+    await afterHook({ toolName: "exec", result: { ok: true } });
 
     expect(mockExportReceipt).not.toHaveBeenCalled();
   });
 });
 
 // ---------------------------------------------------------------------------
-// after_tool_call — observability
+// after_tool_call — receipt completion
 // ---------------------------------------------------------------------------
 
 describe("after_tool_call", () => {
-  it("logs receipt info after allowed call", async () => {
+  it("completes receipt with action_hash after allowed call", async () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps());
 
@@ -1748,19 +1766,20 @@ describe("after_tool_call", () => {
 
     const beforeHook = api._hooks.get("before_tool_call")!;
     await beforeHook(
-      { toolName: "exec", params: {} },
+      { toolName: "exec", params: { command: "ls" } },
       { toolName: "exec" }
     );
 
     const afterHook = api._hooks.get("after_tool_call")!;
-    afterHook();
+    await afterHook({ toolName: "exec", result: { output: "files" } });
 
     expect(api.logger.info).toHaveBeenCalledWith(
       expect.stringContaining("after_tool_call")
     );
     expect(api.logger.info).toHaveBeenCalledWith(
-      expect.stringContaining("exec")
+      expect.stringContaining("action_hash=")
     );
+    expect(mockGenerateReceipt).toHaveBeenCalledOnce();
   });
 });
 
@@ -1855,8 +1874,7 @@ describe("schema compliance — evaluation_coverage keys", () => {
     mockLoadInvariantChecks.mockReturnValue([]);
     mockRunAllInvariantChecks.mockReturnValue([]);
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     const params = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
     const coverage = params.evaluation_coverage as Record<string, unknown>;
@@ -1885,8 +1903,7 @@ describe("schema compliance — evaluation_coverage keys", () => {
       { check_id: "INV-1", passed: true, severity: "info" },
     ]);
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     const params = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
     const coverage = params.evaluation_coverage as Record<string, unknown>;
@@ -1910,8 +1927,7 @@ describe("schema compliance — evaluation_coverage keys", () => {
     mockLoadInvariantChecks.mockReturnValue([]);
     mockRunAllInvariantChecks.mockReturnValue([]);
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     const params = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
     const coverage = params.evaluation_coverage as Record<string, unknown>;
@@ -1931,8 +1947,7 @@ describe("schema compliance — enforcement enum values", () => {
       boundary_type: "can_execute",
     });
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     const params = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
     const enforcement = params.enforcement as Record<string, unknown>;
@@ -1975,7 +1990,7 @@ describe("schema compliance — enforcement enum values", () => {
     expect(enforcement.action).toBe("escalated");
   });
 
-  it("enforcement.enforcement_mode maps enforce→halt, audit→warn, passthrough→log", async () => {
+  it("enforcement.enforcement_mode maps enforce->halt, audit->warn, passthrough->log", async () => {
     for (const [configMode, expected] of [
       ["enforce", "halt"],
       ["audit", "warn"],
@@ -1991,14 +2006,19 @@ describe("schema compliance — enforcement enum values", () => {
         boundary_type: "can_execute",
       });
 
-      const hook = api._hooks.get("before_tool_call")!;
-      await hook({ toolName: "exec", params: {} });
+      await callAllowedAction(api, "exec");
 
       const params = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
       const enforcement = params.enforcement as Record<string, unknown>;
       expect(enforcement.enforcement_mode).toBe(expected);
 
       vi.clearAllMocks();
+      // Reset default mock return values after clearAllMocks
+      mockGenerateReceipt.mockReturnValue({ receipt_id: "r-mock-123" });
+      mockSignReceipt.mockImplementation((r: unknown) => r);
+      mockStoreSave.mockResolvedValue({ success: true });
+      mockLoadInvariantChecks.mockReturnValue([]);
+      mockRunAllInvariantChecks.mockReturnValue([]);
     }
   });
 });
@@ -2014,8 +2034,7 @@ describe("schema compliance — CheckResult.status values", () => {
       boundary_type: "can_execute",
     });
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     const params = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
     const checks = params.checks as Array<Record<string, unknown>>;
@@ -2063,8 +2082,7 @@ describe("schema compliance — CheckResult.status values", () => {
       { check_id: "INV_TEST", passed: false, status: "UNKNOWN_TYPE", evidence: "" },
     ]);
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: { command: "echo hello" } });
+    await callAllowedAction(api, "exec", { command: "echo hello" });
 
     const params = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
     const checks = params.checks as Array<Record<string, unknown>>;
@@ -2097,6 +2115,7 @@ describe("schema compliance — CheckResult.status values", () => {
     const hook = api._hooks.get("before_tool_call")!;
     await hook({ toolName: "exec", params: { command: "forbidden stuff" } });
 
+    // This fails the invariant which changes decision to halt, so receipt is in before_tool_call
     const params = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
     const checks = params.checks as Array<Record<string, unknown>>;
     const inv = checks.find((c) => c.check_id === "INV_TEST");
@@ -2116,8 +2135,7 @@ describe("schema compliance — parent_receipts null default", () => {
       boundary_type: "can_execute",
     });
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
+    await callAllowedAction(api, "exec");
 
     const params = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
     expect(params.parent_receipts).toBeNull();
@@ -2137,11 +2155,402 @@ describe("schema compliance — parent_receipts null default", () => {
       boundary_type: "can_execute",
     });
 
-    const hook = api._hooks.get("before_tool_call")!;
-    await hook({ toolName: "exec", params: {} });
-    await hook({ toolName: "exec", params: {} });
+    // First call: before + after
+    await callAllowedAction(api, "exec", { command: "ls" });
+
+    // Second call: before + after
+    await callAllowedAction(api, "exec", { command: "pwd" });
 
     const params2 = mockGenerateReceipt.mock.calls[1][0] as Record<string, unknown>;
     expect(params2.parent_receipts).toEqual(["fp-1"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Receipt Triad — allowed actions
+// ---------------------------------------------------------------------------
+
+describe("triad completion — allowed actions", () => {
+  it("after_tool_call generates receipt with action_hash from result", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    const beforeHook = api._hooks.get("before_tool_call")!;
+    await beforeHook({ toolName: "exec", params: { command: "ls" } }, { toolName: "exec" });
+
+    // generateReceipt should NOT have been called yet
+    expect(mockGenerateReceipt).not.toHaveBeenCalled();
+
+    const afterHook = api._hooks.get("after_tool_call")!;
+    const toolResult = { content: [{ type: "text", text: "file1.txt" }] };
+    await afterHook({ toolName: "exec", result: toolResult });
+
+    // NOW generateReceipt should have been called
+    expect(mockGenerateReceipt).toHaveBeenCalledOnce();
+    const receiptParams = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
+    expect(receiptParams.event_type).toBe("invocation_allowed");
+    expect(receiptParams.action_hash).not.toBe(realEmptyHash);
+  });
+
+  it("action_hash computed from tool result via hashObj", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    const toolResult = { content: [{ type: "text", text: "hello" }] };
+    const expectedHash = realHashObj(toolResult);
+
+    await callAllowedAction(api, "exec", { command: "echo hello" }, toolResult);
+
+    const receiptParams = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
+    expect(receiptParams.action_hash).toBe(expectedHash);
+  });
+
+  it("action_hash differs from input_hash", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    await callAllowedAction(api, "exec", { command: "ls" }, { output: "files" });
+
+    const receiptParams = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
+    expect(receiptParams.action_hash).not.toBe(receiptParams.input_hash);
+  });
+
+  it("input_hash computed from tool name and cleaned args", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    const params = { command: "ls", _justification: "testing" };
+    await callAllowedAction(api, "exec", params);
+
+    const expectedHash = realHashObj({ args: { command: "ls" }, tool: "exec" });
+    const receiptParams = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
+    expect(receiptParams.input_hash).toBe(expectedHash);
+  });
+
+  it("reasoning_hash from _justification param", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    const justification = "Need to list files for project setup";
+    await callAllowedAction(api, "exec", { command: "ls", _justification: justification });
+
+    const expectedHash = realHashContent(justification);
+    const receiptParams = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
+    expect(receiptParams.reasoning_hash).toBe(expectedHash);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Receipt Triad — halted actions
+// ---------------------------------------------------------------------------
+
+describe("triad completion — halted actions", () => {
+  it("halt receipt generated in before_tool_call", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "halt",
+      reason: "Blocked",
+      boundary_type: "cannot_execute",
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook({ toolName: "rm", params: {} }, { toolName: "rm" });
+
+    expect(mockGenerateReceipt).toHaveBeenCalledOnce();
+  });
+
+  it("halt action_hash is EMPTY_HASH", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "halt",
+      reason: "Blocked",
+      boundary_type: "cannot_execute",
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook({ toolName: "rm", params: {} }, { toolName: "rm" });
+
+    const receiptParams = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
+    expect(receiptParams.action_hash).toBe(realEmptyHash);
+  });
+
+  it("halt event_type is invocation_halted", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "halt",
+      reason: "Blocked",
+      boundary_type: "cannot_execute",
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook({ toolName: "rm", params: {} }, { toolName: "rm" });
+
+    const receiptParams = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
+    expect(receiptParams.event_type).toBe("invocation_halted");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Receipt Triad — escalated actions
+// ---------------------------------------------------------------------------
+
+describe("triad completion — escalated actions", () => {
+  it("escalate receipt generated in before_tool_call", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "escalate",
+      reason: "Needs approval",
+      boundary_type: "must_escalate",
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook({ toolName: "browser", params: {} }, { toolName: "browser" });
+
+    expect(mockGenerateReceipt).toHaveBeenCalledOnce();
+  });
+
+  it("escalate event_type is invocation_escalated", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "escalate",
+      reason: "Needs approval",
+      boundary_type: "must_escalate",
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    await hook({ toolName: "browser", params: {} }, { toolName: "browser" });
+
+    const receiptParams = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
+    expect(receiptParams.event_type).toBe("invocation_escalated");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Event type and context_limitation
+// ---------------------------------------------------------------------------
+
+describe("event_type and context_limitation", () => {
+  it("allowed action has event_type invocation_allowed", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    await callAllowedAction(api, "write", { path: "/tmp/f.txt" });
+
+    const receiptParams = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
+    expect(receiptParams.event_type).toBe("invocation_allowed");
+  });
+
+  it("non-exec tool has context_limitation gateway_boundary", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    await callAllowedAction(api, "write", { path: "/tmp/f.txt" });
+
+    const receiptParams = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
+    expect(receiptParams.context_limitation).toBe("gateway_boundary");
+  });
+
+  it("exec tool has context_limitation cli_execution", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    await callAllowedAction(api, "exec", { command: "ls" });
+
+    const receiptParams = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
+    expect(receiptParams.context_limitation).toBe("cli_execution");
+  });
+
+  it("assurance is full when _justification present", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    await callAllowedAction(api, "exec", { command: "ls", _justification: "need to check files" });
+
+    const receiptParams = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
+    expect(receiptParams.assurance).toBe("full");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Receipt chaining continuity
+// ---------------------------------------------------------------------------
+
+describe("receipt chaining continuity", () => {
+  it("lastReceipt set after after_tool_call completion", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    const beforeHook = api._hooks.get("before_tool_call")!;
+    await beforeHook({ toolName: "exec", params: {} }, { toolName: "exec" });
+
+    // Before after_tool_call, no receipt should have been generated for chaining
+    expect(mockGenerateReceipt).not.toHaveBeenCalled();
+
+    const afterHook = api._hooks.get("after_tool_call")!;
+    await afterHook({ toolName: "exec", result: { ok: true } });
+
+    // Now receipt should be generated
+    expect(mockGenerateReceipt).toHaveBeenCalledOnce();
+    expect(mockStoreSave).toHaveBeenCalledOnce();
+  });
+
+  it("parent_receipts chain across calls via after_tool_call", async () => {
+    mockGenerateReceipt
+      .mockReturnValueOnce({ receipt_id: "r-1", receipt_fingerprint: "fp-1" })
+      .mockReturnValueOnce({ receipt_id: "r-2", receipt_fingerprint: "fp-2" });
+
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    // First call: before + after
+    await callAllowedAction(api, "exec", { command: "ls" });
+
+    // Second call: before + after
+    await callAllowedAction(api, "exec", { command: "pwd" });
+
+    const params2 = mockGenerateReceipt.mock.calls[1][0] as Record<string, unknown>;
+    expect(params2.parent_receipts).toEqual(["fp-1"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Triad edge cases
+// ---------------------------------------------------------------------------
+
+describe("triad edge cases", () => {
+  it("after_tool_call with no pending receipt is a no-op", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    const afterHook = api._hooks.get("after_tool_call")!;
+    await afterHook({ toolName: "exec", result: { ok: true } });
+
+    expect(mockGenerateReceipt).not.toHaveBeenCalled();
+    expect(mockStoreSave).not.toHaveBeenCalled();
+  });
+
+  it("null event produces EMPTY_HASH for action_hash", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    const beforeHook = api._hooks.get("before_tool_call")!;
+    await beforeHook({ toolName: "exec", params: { command: "true" } }, { toolName: "exec" });
+
+    const afterHook = api._hooks.get("after_tool_call")!;
+    // When event is null: event?.result is undefined, undefined ?? null ?? null = null
+    // result === null triggers EMPTY_HASH path
+    await afterHook(null);
+
+    const receiptParams = mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>;
+    expect(receiptParams.action_hash).toBe(realEmptyHash);
+  });
+
+  it("sink failure in after_tool_call logs error but does not throw", async () => {
+    const failingStore = vi.fn(async () => ({ success: false, error: "DB write failed" }));
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, {
+      constitution: mockConstitution() as HookDeps["constitution"],
+      sink: { store: failingStore } as unknown as HookDeps["sink"],
+      privateKey: null,
+    });
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    const beforeHook = api._hooks.get("before_tool_call")!;
+    await beforeHook({ toolName: "exec", params: {} }, { toolName: "exec" });
+
+    const afterHook = api._hooks.get("after_tool_call")!;
+    // Should not throw
+    await afterHook({ toolName: "exec", result: { ok: true } });
+
+    expect(api.logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("receipt persistence failed")
+    );
   });
 });
