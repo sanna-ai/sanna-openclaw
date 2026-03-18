@@ -285,6 +285,32 @@ export function registerHooks(
         }
       }
 
+      // Built-in shell injection check for exec/bash tools
+      // Defense in depth: runs even without a constitution invariant
+      if (DIRECT_EXEC_TOOLS.includes(toolName) && decision.decision === "allow") {
+        const cmdStr =
+          (params.command as string) ??
+          (params.cmd as string) ??
+          (typeof params === "string" ? params : "");
+
+        const SHELL_OPS = /[;|&`]|\$\(/;
+        if (cmdStr && SHELL_OPS.test(cmdStr)) {
+          if (isEnforceMode) {
+            decision = {
+              decision: "halt",
+              reason: `Shell operators detected in ${toolName} parameters: built-in safety check. Use individual commands instead of shell pipelines.`,
+              boundary_type: decision.boundary_type,
+            };
+            invariantHaltDescription =
+              "Shell operators detected in exec tool parameters";
+          } else {
+            api.logger.warn(
+              `[sanna] Shell operators detected in ${toolName} params (audit mode, not blocking)`
+            );
+          }
+        }
+      }
+
       // Collect failed invariant check IDs for enforcement block
       const failedInvariantIds = checks
         .filter(

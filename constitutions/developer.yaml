@@ -274,3 +274,15 @@ invariants:
     enforcement: warn
     description: "Escalate execution of script files through exec for review"
     severity: high
+
+  - id: INV_NO_SHELL_INJECTION
+    rule: "regex_deny pattern:/[;|&`]|\\$\\(/i"
+    description: "Block shell operators in exec/bash tool parameters to prevent command injection"
+    enforcement: halt
+    severity: critical
+    applies_to:
+      - exec
+      - bash
+      - shell
+      - run_command
+      - execute
