@@ -243,9 +243,31 @@ export function registerHooks(
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        api.logger.warn(
-          `[sanna] Invariant check error for ${toolName}: ${msg}`
-        );
+        if (isEnforceMode) {
+          api.logger.error(
+            `[sanna] Invariant check error for ${toolName} (enforce mode, fail closed): ${msg}`
+          );
+
+          // Fail closed: generate a receipt reflecting the blocked action
+          const errorCheck: CheckResult = {
+            check_id: "INVARIANT_ERROR",
+            passed: false,
+            status: "ERROR",
+            evidence: `Invariant evaluation failed: ${msg}`,
+            enforcement_level: "halt",
+          };
+          checks.push(errorCheck);
+
+          decision = {
+            decision: "halt",
+            reason: `Invariant evaluation failed (fail closed): ${msg}`,
+            boundary_type: decision.boundary_type,
+          };
+        } else {
+          api.logger.warn(
+            `[sanna] Invariant check error for ${toolName}: ${msg}`
+          );
+        }
       }
 
       // Failed invariant checks with halt/escalate enforcement override the verdict

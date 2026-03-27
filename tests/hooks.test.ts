@@ -530,9 +530,46 @@ describe("checks and evaluation_coverage", () => {
     expect(checks[1].check_id).toBe("INV-001");
   });
 
-  it("invariant check error does not block enforcement", async () => {
+  it("invariant check error blocks in enforce mode (fail closed)", async () => {
     const api = createMockApi();
     registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    mockLoadInvariantChecks.mockImplementation(() => {
+      throw new Error("invariant load failed");
+    });
+
+    const hook = api._hooks.get("before_tool_call")!;
+    const result = (await hook(
+      { toolName: "exec", params: {} },
+      { toolName: "exec" }
+    )) as Record<string, unknown>;
+
+    // Enforce mode must block when invariant evaluation fails
+    expect(result.block).toBe(true);
+    expect(result.blockReason).toContain("Invariant evaluation failed");
+
+    // Receipt should include the INVARIANT_ERROR check
+    expect(mockGenerateReceipt).toHaveBeenCalledOnce();
+    const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    const checks = receiptArgs.checks as Array<Record<string, unknown>>;
+    const errorCheck = checks.find((c) => c.check_id === "INVARIANT_ERROR");
+    expect(errorCheck).toBeDefined();
+    expect(errorCheck!.passed).toBe(false);
+    expect(errorCheck!.status).toBe("ERROR");
+  });
+
+  it("invariant check error does not block in audit mode", async () => {
+    const api = createMockApi();
+    registerHooks(api, AUDIT_CONFIG, createDeps());
 
     mockEvaluateAuthority.mockReturnValue({
       decision: "allow",
@@ -550,7 +587,7 @@ describe("checks and evaluation_coverage", () => {
       { toolName: "exec" }
     );
 
-    // Should still allow (receipt generated in after_tool_call)
+    // Audit mode should still allow
     expect(result).toEqual({ blocked: false });
 
     // Complete the allowed action to generate receipt
@@ -558,7 +595,6 @@ describe("checks and evaluation_coverage", () => {
     await afterHook({ toolName: "exec", result: { ok: true } });
 
     expect(mockGenerateReceipt).toHaveBeenCalledOnce();
-
     const receiptArgs = mockGenerateReceipt.mock.calls[0][0] as Record<
       string,
       unknown
