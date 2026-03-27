@@ -94,8 +94,9 @@ export function registerHooks(
   const isEnforceMode = config.enforcementMode === "enforce";
   const workflowId = deps.workflowId ?? randomUUID();
 
-  // Pending receipt for allowed actions — completed in after_tool_call
-  let pendingReceipt: PendingReceipt | null = null;
+  // Pending receipts for allowed actions — completed in after_tool_call.
+  // Keyed by correlationId so concurrent tool calls each track independently.
+  const pendingReceipts = new Map<string, PendingReceipt>();
 
   // Track last completed receipt for receipt chaining (parent_receipts)
   let lastReceipt: {
@@ -440,8 +441,12 @@ export function registerHooks(
           verdict: decision.decision,
         };
 
-        // Clear any stale pending receipt
-        pendingReceipt = null;
+        // Clear any stale pending receipt for this tool
+        for (const [key, pr] of pendingReceipts) {
+          if (pr.toolName === toolName) {
+            pendingReceipts.delete(key);
+          }
+        }
 
         if (decision.decision === "escalate") {
           const blockMsg = `Sanna requires approval: ${decision.reason} (receipt: ${receiptId})`;
@@ -468,7 +473,7 @@ export function registerHooks(
       // Receipt generation deferred until after_tool_call where we have the
       // actual tool result for action_hash computation.
       // -----------------------------------------------------------------------
-      pendingReceipt = {
+      pendingReceipts.set(correlationId, {
         correlationId,
         toolName,
         params,
@@ -480,7 +485,7 @@ export function registerHooks(
         reasoningHash,
         failedInvariantIds,
         invariantHaltDescription,
-      };
+      });
 
       const agentId = (ctx?.agentId as string) ?? "";
       const sessionId = (ctx?.sessionKey as string) ?? "";
@@ -503,19 +508,38 @@ export function registerHooks(
   api.on(
     "after_tool_call",
     async (...args: unknown[]) => {
-      if (!pendingReceipt) {
+      // Extract tool result from args
+      // OpenClaw passes the tool result as the first argument
+      const event = args[0] as Record<string, unknown> | undefined;
+      const result = event?.result ?? event ?? null;
+      const eventToolName = event?.toolName as string | undefined;
+
+      // Look up pending receipt by correlationId from event, or by toolName (FIFO)
+      let pendingKey: string | undefined;
+      const eventCorrelationId = event?.correlationId as string | undefined;
+      if (eventCorrelationId && pendingReceipts.has(eventCorrelationId)) {
+        pendingKey = eventCorrelationId;
+      } else if (eventToolName) {
+        // Fallback: find oldest pending receipt for this tool (FIFO order)
+        for (const [key, pr] of pendingReceipts) {
+          if (pr.toolName === eventToolName) {
+            pendingKey = key;
+            break;
+          }
+        }
+      } else if (pendingReceipts.size === 1) {
+        // No toolName in event (e.g. null event) — use the sole pending entry
+        pendingKey = pendingReceipts.keys().next().value as string;
+      }
+
+      if (!pendingKey) {
         // No pending receipt: tool was blocked (receipt already generated)
         // or something unexpected. Nothing to do.
         return;
       }
 
-      const pending = pendingReceipt;
-      pendingReceipt = null;
-
-      // Extract tool result from args
-      // OpenClaw passes the tool result as the first argument
-      const event = args[0] as Record<string, unknown> | undefined;
-      const result = event?.result ?? event ?? null;
+      const pending = pendingReceipts.get(pendingKey)!;
+      pendingReceipts.delete(pendingKey);
 
       // Compute action_hash from the actual tool result
       let actionHash: string;

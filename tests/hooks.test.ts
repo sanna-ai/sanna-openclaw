@@ -2702,3 +2702,133 @@ describe("shell injection prevention", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Concurrent pending receipts (race condition fix)
+// ---------------------------------------------------------------------------
+
+describe("concurrent pending receipts", () => {
+  it("concurrent tool calls each get their own receipt", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    let receiptCounter = 0;
+    mockGenerateReceipt.mockImplementation(() => ({
+      receipt_id: `r-concurrent-${++receiptCounter}`,
+      receipt_fingerprint: `fp-${receiptCounter}`,
+    }));
+
+    const beforeHook = api._hooks.get("before_tool_call")!;
+    const afterHook = api._hooks.get("after_tool_call")!;
+
+    // Fire two before_tool_call for different tools concurrently
+    await Promise.all([
+      beforeHook({ toolName: "exec", params: { command: "ls" } }, { toolName: "exec" }),
+      beforeHook({ toolName: "write", params: { path: "/tmp/x" } }, { toolName: "write" }),
+    ]);
+
+    // Complete them in reverse order — write first, then exec
+    await afterHook({ toolName: "write", result: { ok: true } });
+    await afterHook({ toolName: "exec", result: { output: "done" } });
+
+    // Both receipts should have been generated (2 calls in after_tool_call)
+    expect(mockGenerateReceipt).toHaveBeenCalledTimes(2);
+
+    // Verify each receipt got the correct tool name
+    const call1Inputs = (mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>).inputs as Record<string, unknown>;
+    const call2Inputs = (mockGenerateReceipt.mock.calls[1][0] as Record<string, unknown>).inputs as Record<string, unknown>;
+    expect(call1Inputs.tool).toBe("write");
+    expect(call2Inputs.tool).toBe("exec");
+  });
+
+  it("receipts are not lost under concurrency", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    const beforeHook = api._hooks.get("before_tool_call")!;
+    const afterHook = api._hooks.get("after_tool_call")!;
+
+    // Fire three before_tool_call for different tools
+    await beforeHook({ toolName: "exec", params: { command: "a" } }, { toolName: "exec" });
+    await beforeHook({ toolName: "write", params: { path: "b" } }, { toolName: "write" });
+    await beforeHook({ toolName: "browser", params: { action: "c" } }, { toolName: "browser" });
+
+    // Complete all three
+    await afterHook({ toolName: "browser", result: {} });
+    await afterHook({ toolName: "exec", result: {} });
+    await afterHook({ toolName: "write", result: {} });
+
+    // All three receipts generated — none lost
+    expect(mockGenerateReceipt).toHaveBeenCalledTimes(3);
+    expect(mockStoreSave).toHaveBeenCalledTimes(3);
+  });
+
+  it("map entries are cleaned up after completion", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    mockEvaluateAuthority.mockReturnValue({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+
+    const beforeHook = api._hooks.get("before_tool_call")!;
+    const afterHook = api._hooks.get("after_tool_call")!;
+
+    await beforeHook({ toolName: "exec", params: { command: "ls" } }, { toolName: "exec" });
+    await afterHook({ toolName: "exec", result: { ok: true } });
+
+    // Calling after_tool_call again for exec should be a no-op (entry was deleted)
+    mockGenerateReceipt.mockClear();
+    mockStoreSave.mockClear();
+    await afterHook({ toolName: "exec", result: { ok: true } });
+
+    expect(mockGenerateReceipt).not.toHaveBeenCalled();
+    expect(mockStoreSave).not.toHaveBeenCalled();
+  });
+
+  it("blocked tool does not leave stale entries for other concurrent calls", async () => {
+    const api = createMockApi();
+    registerHooks(api, ENFORCE_CONFIG, createDeps());
+
+    const beforeHook = api._hooks.get("before_tool_call")!;
+    const afterHook = api._hooks.get("after_tool_call")!;
+
+    // First call: allowed
+    mockEvaluateAuthority.mockReturnValueOnce({
+      decision: "allow",
+      reason: "Permitted",
+      boundary_type: "can_execute",
+    });
+    await beforeHook({ toolName: "exec", params: { command: "ls" } }, { toolName: "exec" });
+
+    // Second call: blocked (generates receipt immediately)
+    mockEvaluateAuthority.mockReturnValueOnce({
+      decision: "halt",
+      reason: "Denied",
+      boundary_type: "cannot_execute",
+    });
+    await beforeHook({ toolName: "write", params: { path: "/etc/passwd" } }, { toolName: "write" });
+
+    // The allowed exec call should still complete normally
+    mockGenerateReceipt.mockClear();
+    await afterHook({ toolName: "exec", result: { output: "done" } });
+
+    expect(mockGenerateReceipt).toHaveBeenCalledTimes(1);
+    const inputs = (mockGenerateReceipt.mock.calls[0][0] as Record<string, unknown>).inputs as Record<string, unknown>;
+    expect(inputs.tool).toBe("exec");
+  });
+});
