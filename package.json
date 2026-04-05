@@ -36,14 +36,15 @@
   "author": "Nic Allen <nic@sanna.dev>",
   "license": "AGPL-3.0-only",
   "peerDependencies": {
-    "openclaw": ">=2026.1.26",
-    "@opentelemetry/api": ">=1.0.0"
+    "@opentelemetry/api": ">=1.0.0",
+    "openclaw": ">=2026.1.26"
   },
   "peerDependenciesMeta": {
-    "@opentelemetry/api": { "optional": true }
+    "@opentelemetry/api": {
+      "optional": true
+    }
   },
   "devDependencies": {
-    "@sinclair/typebox": "^0.32.35",
     "@types/node": "^22.19.11",
     "typescript": "^5.9.3",
     "vitest": "^2.1.9"

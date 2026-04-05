@@ -18,14 +18,14 @@ npm run build
 npm pack
 ```
 
-This produces `sanna-0.2.0.tgz`.
+This produces `sanna-1.0.1.tgz`.
 
 **Important:** Use `npm pack` + `openclaw plugins install <tgz>`, not `openclaw plugins install .`. The tgz respects the `files` field in package.json, excluding tests and source files. Direct install copies everything.
 
 ## 2. Install the Plugin
 
 ```bash
-openclaw plugins install sanna-0.2.0.tgz
+openclaw plugins install sanna-1.0.1.tgz
 ```
 
 ## 3. Enable Hooks
@@ -144,7 +144,7 @@ You should see:
 ```
 PASS  hooks.internal.enabled = true
 PASS  constitution: developer-agent (constitutions/developer.yaml)
-INFO  version: 0.2.0
+INFO  version: 1.0.1
 PASS  receipt store writable
 PASS  public key loaded
 
