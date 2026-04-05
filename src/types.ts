@@ -18,7 +18,9 @@ export interface SannaConfig {
   llmChecks?: boolean;
   llmChecksModel?: string;
   customEvaluatorsPath?: string;
-  sinkType?: "local_sqlite" | "null" | "composite";
+  // CompositeSink is available in @sanna-ai/core but requires a config surface
+  // for specifying sub-sinks. Deferred until multi-sink configuration is designed.
+  sinkType?: "local_sqlite" | "null";
   contentMode?: "full" | "redacted" | "hashes_only";
 }
 

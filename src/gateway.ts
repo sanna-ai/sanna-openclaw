@@ -32,6 +32,7 @@ export function registerGatewayMethods(
       stats.total = store.count();
       stats.allowed = store.count({ status: "PASS" });
       stats.denied = store.count({ status: "FAIL" });
+      stats.escalated = store.count({ status: "ESCALATE" });
     } catch {
       // best effort
     }
