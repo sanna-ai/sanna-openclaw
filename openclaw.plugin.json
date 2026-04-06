@@ -58,7 +58,7 @@
       },
       "sinkType": {
         "type": "string",
-        "enum": ["local_sqlite", "null", "composite"],
+        "enum": ["local_sqlite", "null"],
         "default": "local_sqlite",
         "description": "Receipt persistence sink type"
       },
