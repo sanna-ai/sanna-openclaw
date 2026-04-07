@@ -64,3 +64,11 @@
 
 - Discovered and closed via live red-team testing against Claude Haiku 4.5 and Claude Sonnet 4.6
 - Full writeup at [sanna.dev/blog](https://sanna.dev/blog)
+
+## 1.0.2 (2026-04-05)
+
+- fix: add escalated count to sanna.status RPC (SAN-163)
+- fix: remove composite from sinkType type and plugin.json enum (SAN-163, SAN-176)
+- chore: remove unused @sinclair/typebox dependency (SAN-167)
+- docs: update SETUP.md version references (SAN-167)
+- docs: fix hashes_only in CLAUDE.md (SAN-164)
