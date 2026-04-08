@@ -16,13 +16,11 @@
   "files": [
     "dist/**/*",
     "constitutions/**/*",
-    "scripts/**/*",
     "openclaw.plugin.json",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "postinstall": "node scripts/postinstall.mjs",
     "prebuild": "rm -rf dist",
     "build": "tsc",
     "test": "vitest run",

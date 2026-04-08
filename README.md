@@ -76,7 +76,7 @@ openclaw gateway restart
 openclaw sanna doctor
 ```
 
-Constitution files are auto-discovered from `constitutions/` — no manual path configuration needed. The postinstall script copies templates automatically on `npm install`.
+Constitution files ship with the plugin and are auto-discovered from the `constitutions/` directory at load time — no manual path configuration or copying needed.
 
 See [docs/SETUP.md](docs/SETUP.md) for detailed installation steps.
 
