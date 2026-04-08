@@ -1,5 +1,5 @@
 {
-  "name": "sanna",
+  "name": "@sanna-ai/openclaw",
   "version": "1.0.2",
   "description": "OpenClaw plugin that enforces Sanna governance constitutions on AI agent tool execution",
   "type": "module",
@@ -8,18 +8,19 @@
   "openclaw": {
     "extensions": [
       "./dist/index.js"
-    ]
+    ],
+    "compat": {
+      "pluginApi": ">=2026.1.26"
+    }
   },
   "files": [
     "dist/**/*",
     "constitutions/**/*",
-    "scripts/**/*",
     "openclaw.plugin.json",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "postinstall": "node scripts/postinstall.mjs",
     "prebuild": "rm -rf dist",
     "build": "tsc",
     "test": "vitest run",

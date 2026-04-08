@@ -1,6 +1,13 @@
 ---
 name: sanna
 description: "Sanna governance — tool calls are governed transparently"
+metadata:
+  openclaw:
+    tags: ["governance", "security", "constitution", "receipts", "compliance", "audit", "ed25519", "cryptographic-proof", "tool-gating", "enforcement"]
+    summary: "Constitution enforcement and Ed25519-signed cryptographic receipts for every AI agent tool call. Define what actions agents can and cannot take in YAML constitutions. Three possible outcomes per tool call: allowed, blocked, or escalated for human approval. Every governed action produces a verifiable receipt proving governance was applied at the moment of execution."
+    requiresPlugin: "@sanna-ai/openclaw"
+    requires:
+      bins: ["node"]
 ---
 
 # Sanna Governance
