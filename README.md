@@ -64,7 +64,7 @@ npm run build
 
 # Pack and install
 npm pack
-openclaw plugins install sanna-1.0.0.tgz
+openclaw plugins install @sanna-ai/openclaw
 
 # Enable hooks in ~/.openclaw/openclaw.json
 # hooks.internal.enabled must be true for governance to fire
