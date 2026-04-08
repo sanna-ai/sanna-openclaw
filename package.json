@@ -8,7 +8,10 @@
   "openclaw": {
     "extensions": [
       "./dist/index.js"
-    ]
+    ],
+    "compat": {
+      "pluginApi": ">=2026.1.26"
+    }
   },
   "files": [
     "dist/**/*",
