@@ -1,4 +1,4 @@
-# sanna
+# @sanna-ai/openclaw
 
 **[sanna.dev](https://sanna.dev)**
 
@@ -182,7 +182,7 @@ In `openclaw.json`, the plugin reads its config from the plugin block:
 | `receiptStorePath` | string | `~/.sanna/receipts/openclaw.db` | SQLite receipt store path |
 | `governedTools` | string[] | All tier 1+2+3 | Tool names to govern |
 | `enforcementMode` | string | `"enforce"` | `enforce`, `audit`, or `passthrough` |
-| `sinkType` | string | `"local_sqlite"` | Receipt sink: `local_sqlite`, `null`, or `composite` |
+| `sinkType` | string | `"local_sqlite"` | Receipt sink: `local_sqlite` or `null` |
 | `contentMode` | string | `"full"` | Receipt content mode: `full`, `redacted`, or `hashes_only` |
 | `otelExport` | boolean | `false` | Enable OpenTelemetry span export for receipts |
 | `otelServiceName` | string | `"sanna-openclaw"` | OTel service name for exported spans |
@@ -210,7 +210,7 @@ Set `customEvaluatorsPath` to a JS module that registers custom invariant evalua
 ## Development
 
 ```bash
-# TypeScript tests (178 tests)
+# TypeScript tests (221 tests)
 npm test
 
 # Type check
