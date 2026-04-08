@@ -42,6 +42,9 @@
     "openclaw": ">=2026.1.26"
   },
   "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    },
     "@opentelemetry/api": {
       "optional": true
     }
