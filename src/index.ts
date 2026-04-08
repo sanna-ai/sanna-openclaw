@@ -150,16 +150,56 @@ export default function register(api: PluginAPI): void {
     api.logger.info("[sanna] Using NullSink (receipts discarded).");
   } else {
     // Default: local_sqlite
-    sqliteSink = new LocalSQLiteSink(storePath);
+    try {
+      sqliteSink = new LocalSQLiteSink(storePath);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes("Could not locate the bindings file")) {
+        const fixMsg =
+          "[sanna] Receipt persistence failed: better-sqlite3 native module not compiled.\n" +
+          "[sanna] This typically happens when OpenClaw installs dependencies with --ignore-scripts.\n" +
+          "[sanna] To fix, run:\n" +
+          "[sanna]\n" +
+          "[sanna]   cd ~/.openclaw/extensions/sanna && npm rebuild better-sqlite3\n" +
+          "[sanna]\n" +
+          "[sanna] Then restart the gateway:\n" +
+          "[sanna]\n" +
+          "[sanna]   openclaw gateway restart\n";
+        api.logger.error(fixMsg);
+        throw new Error(fixMsg);
+      }
+      throw err;
+    }
     sink = sqliteSink;
   }
 
   // For gateway/CLI queries we need a ReceiptStore.
   // LocalSQLiteSink exposes its inner store via getStore().
   // If using NullSink, fall back to a fresh ReceiptStore for queries.
-  const store = sqliteSink
-    ? sqliteSink.getStore()
-    : new ReceiptStore(storePath);
+  let store: ReceiptStore;
+  if (sqliteSink) {
+    store = sqliteSink.getStore();
+  } else {
+    try {
+      store = new ReceiptStore(storePath);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes("Could not locate the bindings file")) {
+        const fixMsg =
+          "[sanna] Receipt query store failed: better-sqlite3 native module not compiled.\n" +
+          "[sanna] To fix, run:\n" +
+          "[sanna]\n" +
+          "[sanna]   cd ~/.openclaw/extensions/sanna && npm rebuild better-sqlite3\n" +
+          "[sanna]\n" +
+          "[sanna] Then restart the gateway:\n" +
+          "[sanna]\n" +
+          "[sanna]   openclaw gateway restart\n";
+        api.logger.error(fixMsg);
+        throw new Error(fixMsg);
+      }
+      throw err;
+    }
+  }
 
   // Load private key (optional)
   let privateKey: KeyObject | null = null;

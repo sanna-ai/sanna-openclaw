@@ -222,6 +222,35 @@ npm run build
 
 See the full red-team writeup at [sanna.dev/blog](https://sanna.dev/blog).
 
+## Troubleshooting
+
+### "Could not locate the bindings file" on first install
+
+The plugin uses SQLite for receipt persistence via `better-sqlite3`, a native C++ module. OpenClaw installs plugin dependencies with `--ignore-scripts`, which skips the native compilation step. The fix is a one-time rebuild:
+
+```bash
+cd ~/.openclaw/extensions/sanna && npm rebuild better-sqlite3
+openclaw gateway restart
+```
+
+After this, the native module is compiled for your platform and persists across gateway restarts. You only need to run this once per install.
+
+### "hooks.internal.enabled is not set"
+
+Sanna requires internal hooks to intercept tool calls. In `~/.openclaw/openclaw.json`, ensure:
+
+```json
+{
+  "hooks": {
+    "internal": {
+      "enabled": true
+    }
+  }
+}
+```
+
+Then restart the gateway: `openclaw gateway restart`
+
 ## License
 
 AGPL-3.0 — see [LICENSE](LICENSE)
