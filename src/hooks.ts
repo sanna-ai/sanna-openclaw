@@ -252,6 +252,7 @@ export function registerHooks(
           const errorCheck: CheckResult = {
             check_id: "INVARIANT_ERROR",
             passed: false,
+            severity: "critical",
             status: "ERROR",
             evidence: `Invariant evaluation failed: ${msg}`,
             enforcement_level: "halt",

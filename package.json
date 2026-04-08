@@ -7,7 +7,7 @@
   "types": "dist/index.d.ts",
   "openclaw": {
     "extensions": [
-      "./dist/index.js"
+      "./src/index.ts"
     ],
     "compat": {
       "pluginApi": ">=2026.1.26"
@@ -15,6 +15,7 @@
   },
   "files": [
     "dist/**/*",
+    "src/**/*",
     "constitutions/**/*",
     "openclaw.plugin.json",
     "README.md",
