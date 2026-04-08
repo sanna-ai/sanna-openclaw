@@ -1,5 +1,7 @@
 # @sanna-ai/openclaw
 
+[![CI](https://github.com/sanna-ai/sanna-openclaw/actions/workflows/ci.yml/badge.svg)](https://github.com/sanna-ai/sanna-openclaw/actions/workflows/ci.yml)
+
 **[sanna.dev](https://sanna.dev)**
 
 ## The Problem
