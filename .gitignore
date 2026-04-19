@@ -20,3 +20,5 @@ coverage/
 CLAUDE.md
 *.tgz
 security-audit-sanna-openclaw-2026-03-26.md
+security-audit-*.md
+security-review-*.md
