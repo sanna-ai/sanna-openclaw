@@ -11,7 +11,6 @@ export interface SannaConfig {
   privateKeyPath?: string;
   publicKeyPath?: string;
   receiptStorePath?: string;
-  governedTools?: string[];
   enforcementMode?: "enforce" | "audit" | "passthrough";
   otelExport?: boolean;
   otelServiceName?: string;

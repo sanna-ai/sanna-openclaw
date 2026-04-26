@@ -69,12 +69,10 @@ function createMockApi(): MockAPI {
 
 const ENFORCE_CONFIG: SannaConfig = {
   enforcementMode: "enforce",
-  governedTools: ["exec", "write", "browser"],
 };
 
 const AUDIT_CONFIG: SannaConfig = {
   enforcementMode: "audit",
-  governedTools: ["exec", "write", "browser"],
 };
 
 function mockConstitution() {

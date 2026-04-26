@@ -182,7 +182,6 @@ In `openclaw.json`, the plugin reads its config from the plugin block:
 | `privateKeyPath` | string | `""` | Ed25519 private key PEM for receipt signing |
 | `publicKeyPath` | string | `""` | Ed25519 public key PEM for receipt verification |
 | `receiptStorePath` | string | `~/.sanna/receipts/openclaw.db` | SQLite receipt store path |
-| `governedTools` | string[] | All tier 1+2+3 | Tool names to govern |
 | `enforcementMode` | string | `"enforce"` | `enforce`, `audit`, or `passthrough` |
 | `sinkType` | string | `"local_sqlite"` | Receipt sink: `local_sqlite` or `null` |
 | `contentMode` | string | `"full"` | Receipt content mode: `full`, `redacted`, or `hashes_only` |

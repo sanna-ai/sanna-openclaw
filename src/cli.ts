@@ -45,9 +45,6 @@ export function registerCli(
         console.log(
           `Constitution: ${constitution.identity.agent_name} (${constitutionPath})`
         );
-        console.log(
-          `Governed tools: ${(config.governedTools ?? []).join(", ")}`
-        );
 
         try {
           const total = store.count();

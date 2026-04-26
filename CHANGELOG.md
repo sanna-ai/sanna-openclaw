@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.1.0
+
+### Removed
+
+- **`governedTools` config option (and `GOVERNED_TOOLS_DEFAULT` /
+  tier constants).** The hook layer evaluated authority on every tool
+  call regardless of this field, so the option was a no-op promising
+  configurability the implementation never delivered. Documentation
+  and config schema implied per-tool governance opt-in; the code
+  governed everything by default. Per Sanna's governance-first
+  posture, the safer default (everything-governed) is preserved by
+  removing the misleading knob rather than introducing per-tool
+  opt-out behavior. (SAN-231)
+
+### Migration
+
+- Existing configs with `governedTools` set: the field is now silently
+  ignored. JSON Schema validation no longer recognises the property,
+  so customers using strict validators may see a warning. Behavior
+  is unchanged — every tool was already governed.
+
 ## v1.0.1
 
 ### Fixed
