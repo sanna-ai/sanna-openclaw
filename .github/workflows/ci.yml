@@ -25,6 +25,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Validate state doc (SAN-326)
+        run: npx tsx tools/generate-state-doc.ts --check
+
       - name: Build
         run: npm run build
 
