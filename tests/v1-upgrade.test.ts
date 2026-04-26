@@ -109,7 +109,6 @@ function createDeps(overrides?: Partial<HookDeps>): HookDeps {
 
 const ENFORCE_CONFIG: SannaConfig = {
   enforcementMode: "enforce",
-  governedTools: ["exec", "write"],
 };
 
 /** Call before_tool_call + after_tool_call for an allowed action (completes receipt). */

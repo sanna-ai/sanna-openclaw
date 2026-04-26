@@ -44,7 +44,6 @@ export function registerGatewayMethods(
         version: constitution.schema_version,
         policy_hash: constitution.policy_hash ?? "",
       },
-      governedTools: config.governedTools ?? [],
       enforcement_stats: stats,
     });
   });

@@ -23,11 +23,6 @@
         "type": "string",
         "description": "Path to SQLite receipt store database"
       },
-      "governedTools": {
-        "type": "array",
-        "items": { "type": "string" },
-        "description": "Tool names to govern. Defaults to all tier 1+2+3 tools."
-      },
       "enforcementMode": {
         "type": "string",
         "enum": ["enforce", "audit", "passthrough"],

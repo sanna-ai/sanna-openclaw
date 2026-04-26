@@ -159,7 +159,6 @@ Governance is ready.
 | `privateKeyPath` | string | `""` | Path to Ed25519 private key PEM for receipt signing |
 | `publicKeyPath` | string | `""` | Path to Ed25519 public key PEM for receipt verification |
 | `receiptStorePath` | string | `~/.sanna/receipts/openclaw.db` | Path to SQLite receipt store |
-| `governedTools` | string[] | All tier 1+2+3 | Tool names to govern |
 | `enforcementMode` | string | `"enforce"` | `enforce`, `audit`, or `passthrough` |
 | `otelExport` | boolean | `false` | Enable OpenTelemetry span export for governance receipts |
 | `otelServiceName` | string | `"sanna-openclaw"` | OpenTelemetry service name for exported spans |

@@ -58,7 +58,6 @@ function createMockApi(): MockAPI {
 
 const DEFAULT_CONFIG: SannaConfig = {
   enforcementMode: "enforce",
-  governedTools: ["exec", "write"],
 };
 
 function createDeps(overrides?: Partial<CliDeps>): CliDeps {

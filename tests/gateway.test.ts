@@ -44,7 +44,6 @@ function createMockApi(): MockAPI {
 
 const DEFAULT_CONFIG: SannaConfig = {
   enforcementMode: "enforce",
-  governedTools: ["exec", "write"],
 };
 
 const fakeDeps: GatewayDeps = {
@@ -100,7 +99,6 @@ describe("sanna.status", () => {
         constitution: expect.objectContaining({
           name: "test-agent",
         }),
-        governedTools: ["exec", "write"],
         enforcement_stats: { total: 10, allowed: 8, denied: 2, escalated: 0 },
       })
     );
